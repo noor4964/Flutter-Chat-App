@@ -5,6 +5,8 @@ import 'package:flutter_chat_app/models/message_model.dart';
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  FirebaseFirestore get firestore => _firestore;
+
   // Send a message
   Future<void> sendMessage(String chatId, String userId, String message) async {
     try {

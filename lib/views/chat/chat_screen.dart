@@ -1,11 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
-import 'package:flutter_chat_app/services/auth_service.dart';
-import 'package:flutter_chat_app/views/user_list_screen.dart';
-import 'package:flutter_chat_app/views/auth/login_screen.dart';
-import 'package:flutter_chat_app/models/chat_model.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -20,12 +17,67 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
+  String? _chatPersonName;
+  String? _chatPersonEmail;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChatPersonDetails();
+  }
+
+  Future<void> _loadChatPersonDetails() async {
+    if (user != null) {
+      DocumentSnapshot chatDoc = await _chatService.firestore.collection('chats').doc(widget.chatId).get();
+      List<dynamic> userIds = chatDoc['userIds'];
+      String chatPersonId = userIds.firstWhere((id) => id != user!.uid);
+      _chatPersonName = await _chatService.getUsername(chatPersonId);
+      DocumentSnapshot userDoc = await _chatService.firestore.collection('users').doc(chatPersonId).get();
+      setState(() {
+        _chatPersonEmail = userDoc['email'];
+      });
+    }
+  }
+
+  void _showChatPersonDetails() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Chat Person Details'),
+          content: _chatPersonName != null && _chatPersonEmail != null
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Name: $_chatPersonName'),
+                    Text('Email: $_chatPersonEmail'),
+                  ],
+                )
+              : const CircularProgressIndicator(),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chat'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            onPressed: _showChatPersonDetails,
+          ),
+        ],
       ),
       body: Column(
         children: <Widget>[
@@ -121,76 +173,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class ChatListScreen extends StatelessWidget {
-  final ChatService _chatService = ChatService();
-  final User? user = FirebaseAuth.instance.currentUser;
-
-  ChatListScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chat List'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => UserListScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await AuthService().signOut();
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => LoginScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: StreamBuilder<List<Chat>>(
-        stream: _chatService.getUserChats(user!.uid),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          var chats = snapshot.data!;
-          if (chats.isEmpty) {
-            return const Center(child: Text('No chats available.'));
-          }
-          return ListView.builder(
-            itemCount: chats.length,
-            itemBuilder: (context, index) {
-              var chat = chats[index];
-              return ListTile(
-                leading: const CircleAvatar(
-                  child: Icon(Icons.person),
-                ),
-                title: Text(chat.name),
-                subtitle: Text(chat.lastMessage),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ChatScreen(chatId: chat.id),
-                    ),
-                  );
-                },
-              );
-            },
-          );
-        },
       ),
     );
   }
