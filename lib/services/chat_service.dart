@@ -1,21 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/models/chat_model.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
 
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  // Get Firestore instance
   FirebaseFirestore get firestore => _firestore;
 
   // Send a message
   Future<void> sendMessage(String chatId, String userId, String message) async {
     try {
-      DocumentSnapshot chatDoc = await _firestore.collection('chats').doc(chatId).get();
-      List<dynamic> blockedUsers = chatDoc['blockedUsers'] ?? [];
-      if (blockedUsers.contains(userId)) {
-        print('User is blocked and cannot send messages.');
-        return;
-      }
       await _firestore.collection('chats').doc(chatId).collection('messages').add({
         'sender': userId,
         'text': message,
@@ -49,8 +45,6 @@ class ChatService {
         'name': chatName,
         'lastMessage': '',
         'createdAt': FieldValue.serverTimestamp(),
-        'blockedUsers': [],
-        'mutedUsers': {},
       });
       return chatRef.id;
     } catch (e) {
@@ -65,11 +59,9 @@ class ChatService {
         .collection('chats')
         .where('userIds', arrayContains: userId)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) {
-          var data = doc.data();
-          data['id'] = doc.id; // Add the document ID to the data
-          return Chat.fromJson(data);
-        }).toList());
+        .map((snapshot) => snapshot.docs
+            .map((doc) => Chat.fromFirestore(doc))
+            .toList());
   }
 
   // Delete a chat and remove the user from the logged user's database
@@ -169,6 +161,26 @@ class ChatService {
       return userDoc['username'];
     } catch (e) {
       print('Error getting username: $e');
+      return null;
+    }
+  }
+
+  // Check for existing chat between two users
+  Future<String?> getExistingChatId(String userId1, String userId2) async {
+    try {
+      QuerySnapshot querySnapshot = await _firestore
+          .collection('chats')
+          .where('userIds', arrayContains: userId1)
+          .get();
+      for (var doc in querySnapshot.docs) {
+        List<dynamic> userIds = doc['userIds'];
+        if (userIds.contains(userId2)) {
+          return doc.id;
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error checking for existing chat: $e');
       return null;
     }
   }

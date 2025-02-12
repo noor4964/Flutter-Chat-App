@@ -136,13 +136,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             username, email, password, gender
                           );
                           if (user != null) {
+                            print('User registered successfully: ${user.uid}');
                             Navigator.pushReplacement(
                               context,
                               MaterialPageRoute(builder: (context) => LoginScreen()),
                             );
                           } else {
+                            print('Registration failed: User is null');
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('Registration failed: User is null')),
+                            );
+                          }
+                        } on FirebaseAuthException catch (e) {
+                          if (e.code == 'username-already-in-use') {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('The username is already in use by another account.')),
+                            );
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Error: ${e.message}')),
                             );
                           }
                         } catch (e) {

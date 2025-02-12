@@ -8,6 +8,7 @@ import 'package:flutter_chat_app/models/chat_model.dart';
 import 'chat_screen.dart';
 import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
+import 'package:flutter_chat_app/views/pending_requests_screen.dart'; // Import the PendingRequestsScreen
 
 class ChatListScreen extends StatefulWidget {
   @override
@@ -35,6 +36,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => UserListScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => PendingRequestsScreen()),
               );
             },
           ),
@@ -134,21 +144,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   ),
                   color: isSelected ? Colors.grey[300] : Colors.white,
                   child: ListTile(
-                    leading: FutureBuilder<bool>(
-                      future: _chatService.isUserMuted(chat.id, user!.uid),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData) {
-                          return const CircleAvatar(
-                            child: Icon(Icons.person),
-                          );
-                        }
-                        bool isMuted = snapshot.data!;
-                        return CircleAvatar(
-                          child: Icon(
-                            isMuted ? Icons.volume_off : Icons.person,
-                          ),
-                        );
-                      },
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.person),
                     ),
                     title: Text(
                       chat.name,
@@ -156,67 +153,47 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     ),
                     subtitle: Text(chat.lastMessage),
                     trailing: isSelected
-                        ? FutureBuilder<bool>(
-                            future: _chatService.isUserBlocked(chat.id, user!.uid),
-                            builder: (context, snapshot) {
-                              if (!snapshot.hasData) {
-                                return CircularProgressIndicator();
-                              }
-                              bool isBlocked = snapshot.data!;
-                              return PopupMenuButton<String>(
-                                onSelected: (String result) {
-                                  setState(() {
-                                    _selectedChats.remove(chat.id);
-                                    // Handle the selected action
-                                    switch (result) {
-                                      case 'Archive':
-                                        // Handle Archive action
-                                        break;
-                                      case 'Mute':
-                                        _showMuteOptions(context, chat.id, user!.uid);
-                                        break;
-                                      case 'Block':
-                                        if (isBlocked) {
-                                          _chatService.unblockUser(chat.id, user!.uid);
-                                        } else {
-                                          _chatService.blockUser(chat.id, user!.uid);
-                                        }
-                                        break;
-                                      case 'Delete':
-                                        _chatService.deleteChat(chat.id, user!.uid);
-                                        break;
+                        ? PopupMenuButton<String>(
+                            onSelected: (String result) {
+                              setState(() {
+                                _selectedChats.remove(chat.id);
+                                // Handle the selected action
+                                switch (result) {
+                                  case 'Archive':
+                                    // Handle Archive action
+                                    break;
+                                  case 'Mute':
+                                    // Handle Mute action
+                                    break;
+                                  case 'Block':
+                                    // Handle Block action
+                                    break;
+                                  case 'Delete':
+                                    if (user != null) {
+                                      _chatService.deleteChat(chat.id, user!.uid);
                                     }
-                                  });
-                                },
-                                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                                  const PopupMenuItem<String>(
-                                    value: 'Archive',
-                                    child: Text('Archive'),
-                                  ),
-                                  PopupMenuItem<String>(
-                                    value: 'Mute',
-                                    child: FutureBuilder<bool>(
-                                      future: _chatService.isUserMuted(chat.id, user!.uid),
-                                      builder: (context, snapshot) {
-                                        if (!snapshot.hasData) {
-                                          return const Text('Mute');
-                                        }
-                                        bool isMuted = snapshot.data!;
-                                        return Text(isMuted ? 'Unmute' : 'Mute');
-                                      },
-                                    ),
-                                  ),
-                                  PopupMenuItem<String>(
-                                    value: 'Block',
-                                    child: Text(isBlocked ? 'Unblock' : 'Block'),
-                                  ),
-                                  const PopupMenuItem<String>(
-                                    value: 'Delete',
-                                    child: Text('Delete'),
-                                  ),
-                                ],
-                              );
+                                    break;
+                                }
+                              });
                             },
+                            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                              const PopupMenuItem<String>(
+                                value: 'Archive',
+                                child: Text('Archive'),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'Mute',
+                                child: Text('Mute'),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'Block',
+                                child: Text('Block'),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'Delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
                           )
                         : null,
                     onTap: () {
@@ -237,61 +214,5 @@ class _ChatListScreenState extends State<ChatListScreen> {
         },
       ),
     );
-  }
-
-  void _showMuteOptions(BuildContext context, String chatId, String userId) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Mute Options'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                title: Text('For 15 minutes'),
-                onTap: () {
-                  _muteUser(chatId, userId, Duration(minutes: 15));
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                title: Text('For 1 hour'),
-                onTap: () {
-                  _muteUser(chatId, userId, Duration(hours: 1));
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                title: Text('For 8 hours'),
-                onTap: () {
-                  _muteUser(chatId, userId, Duration(hours: 8));
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                title: Text('For 24 hours'),
-                onTap: () {
-                  _muteUser(chatId, userId, Duration(hours: 24));
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                title: Text('Until I change it'),
-                onTap: () {
-                  _muteUser(chatId, userId, Duration(days: 365 * 100)); // Effectively forever
-                  Navigator.pop(context);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _muteUser(String chatId, String userId, Duration duration) {
-    DateTime muteUntil = DateTime.now().add(duration);
-    _chatService.muteUser(chatId, userId, muteUntil);
   }
 }

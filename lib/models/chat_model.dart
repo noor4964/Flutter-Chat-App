@@ -5,33 +5,21 @@ class Chat {
   final String name;
   final String lastMessage;
   final List<String> userIds;
-  final DateTime createdAt;
 
   Chat({
     required this.id,
     required this.name,
     required this.lastMessage,
     required this.userIds,
-    required this.createdAt,
   });
 
-  factory Chat.fromJson(Map<String, dynamic> json) {
+  factory Chat.fromFirestore(DocumentSnapshot doc) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return Chat(
-      id: json['id'],
-      name: json['name'],
-      lastMessage: json['lastMessage'],
-      userIds: List<String>.from(json['userIds']),
-      createdAt: (json['createdAt'] as Timestamp).toDate(),
+      id: doc.id,
+      name: data['name'] ?? '',
+      lastMessage: data['lastMessage'] ?? '',
+      userIds: List<String>.from(data['userIds']),
     );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'lastMessage': lastMessage,
-      'userIds': userIds,
-      'createdAt': createdAt.toIso8601String(),
-    };
   }
 }
