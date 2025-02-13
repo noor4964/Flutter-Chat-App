@@ -121,32 +121,17 @@ class AuthService {
   }
 
   // Accept connection request
-  Future<void> acceptConnection(String connectionId) async {
-    User? user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      print("❌ User not logged in!");
-      return;
-    }
+  Future<void> acceptConnectionRequest(String requestId, String receiverId) async {
+    await FirebaseFirestore.instance.collection('connections').doc(requestId).update({
+      'status': 'accepted',
+    });
 
-    try {
-      DocumentSnapshot connectionDoc = await FirebaseFirestore.instance.collection('connections').doc(connectionId).get();
-      String senderId = connectionDoc['senderId'];
-
-      await FirebaseFirestore.instance.collection('connections').doc(connectionId).update({
-        'status': 'accepted',
-      });
-
-      // Create a chat document for both users
-      DocumentReference chatRef = FirebaseFirestore.instance.collection('chats').doc();
-      await chatRef.set({
-        'userIds': [user.uid, senderId],
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      print("✅ Connection accepted and chat created!");
-    } catch (e) {
-      print("❌ Error accepting connection: $e");
-    }
+    // Create a chat document for both users
+    DocumentReference chatRef = FirebaseFirestore.instance.collection('chats').doc();
+    await chatRef.set({
+      'userIds': [FirebaseAuth.instance.currentUser!.uid, receiverId],
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   // Fetch pending connection requests
@@ -164,5 +149,5 @@ class AuthService {
       data['id'] = doc.id; // Include the document ID
       return data;
     }).toList();
-  }
+}
 }

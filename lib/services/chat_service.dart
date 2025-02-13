@@ -59,119 +59,70 @@ class ChatService {
         .collection('chats')
         .where('userIds', arrayContains: userId)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => Chat.fromFirestore(doc))
-            .toList());
+        .map((snapshot) => snapshot.docs.map((doc) => Chat.fromFirestore(doc)).toList());
   }
 
-  // Delete a chat and remove the user from the logged user's database
+  // Accept connection request
+  Future<void> acceptConnectionRequest(String requestId, String senderId) async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print("❌ User not logged in!");
+      return;
+    }
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        DocumentReference connectionRef = _firestore.collection('connections').doc(requestId);
+        DocumentSnapshot connectionDoc = await transaction.get(connectionRef);
+
+        if (connectionDoc.exists) {
+          transaction.update(connectionRef, {'status': 'accepted'});
+
+          // Create a chat document for both users
+          DocumentReference chatRef = _firestore.collection('chats').doc();
+          transaction.set(chatRef, {
+            'userIds': [user.uid, senderId],
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+
+          print("✅ Connection accepted and chat created!");
+        }
+      });
+    } catch (e) {
+      print("❌ Error accepting connection: $e");
+    }
+  }
+
+  // Delete a chat
   Future<void> deleteChat(String chatId, String userId) async {
     try {
-      // Delete the chat
-      await _firestore.collection('chats').doc(chatId).delete();
+      DocumentReference chatRef = _firestore.collection('chats').doc(chatId);
+      DocumentSnapshot chatDoc = await chatRef.get();
 
-      // Remove the user from the logged user's database
-      await _firestore.collection('users').doc(userId).delete();
-    } catch (e) {
-      print('Error deleting chat: $e');
-    }
-  }
-
-  // Block a user
-  Future<void> blockUser(String chatId, String userId) async {
-    try {
-      await _firestore.collection('chats').doc(chatId).update({
-        'blockedUsers': FieldValue.arrayUnion([userId]),
-      });
-    } catch (e) {
-      print('Error blocking user: $e');
-    }
-  }
-
-  // Unblock a user
-  Future<void> unblockUser(String chatId, String userId) async {
-    try {
-      await _firestore.collection('chats').doc(chatId).update({
-        'blockedUsers': FieldValue.arrayRemove([userId]),
-      });
-    } catch (e) {
-      print('Error unblocking user: $e');
-    }
-  }
-
-  // Check if a user is blocked
-  Future<bool> isUserBlocked(String chatId, String userId) async {
-    try {
-      DocumentSnapshot chatDoc = await _firestore.collection('chats').doc(chatId).get();
-      List<dynamic> blockedUsers = chatDoc['blockedUsers'] ?? [];
-      return blockedUsers.contains(userId);
-    } catch (e) {
-      print('Error checking if user is blocked: $e');
-      return false;
-    }
-  }
-
-  // Mute a user
-  Future<void> muteUser(String chatId, String userId, DateTime until) async {
-    try {
-      await _firestore.collection('chats').doc(chatId).update({
-        'mutedUsers.$userId': until,
-      });
-    } catch (e) {
-      print('Error muting user: $e');
-    }
-  }
-
-  // Unmute a user
-  Future<void> unmuteUser(String chatId, String userId) async {
-    try {
-      await _firestore.collection('chats').doc(chatId).update({
-        'mutedUsers.$userId': FieldValue.delete(),
-      });
-    } catch (e) {
-      print('Error unmuting user: $e');
-    }
-  }
-
-  // Check if a user is muted
-  Future<bool> isUserMuted(String chatId, String userId) async {
-    try {
-      DocumentSnapshot chatDoc = await _firestore.collection('chats').doc(chatId).get();
-      Map<String, dynamic> mutedUsers = chatDoc['mutedUsers'] ?? {};
-      if (mutedUsers.containsKey(userId)) {
-        DateTime muteUntil = (mutedUsers[userId] as Timestamp).toDate();
-        if (muteUntil.isAfter(DateTime.now())) {
-          return true;
+      if (chatDoc.exists) {
+        List<dynamic> userIds = chatDoc['userIds'];
+        if (userIds.contains(userId)) {
+          await chatRef.delete();
+          print("✅ Chat deleted!");
         } else {
-          await unmuteUser(chatId, userId);
-          return false;
+          print("❌ User not authorized to delete this chat!");
         }
+      } else {
+        print("❌ Chat does not exist!");
       }
-      return false;
     } catch (e) {
-      print('Error checking if user is muted: $e');
-      return false;
+      print("❌ Error deleting chat: $e");
     }
   }
 
-  // Get username by user ID
-  Future<String?> getUsername(String userId) async {
-    try {
-      DocumentSnapshot userDoc = await _firestore.collection('users').doc(userId).get();
-      return userDoc['username'];
-    } catch (e) {
-      print('Error getting username: $e');
-      return null;
-    }
-  }
-
-  // Check for existing chat between two users
+  // Get existing chat ID
   Future<String?> getExistingChatId(String userId1, String userId2) async {
     try {
       QuerySnapshot querySnapshot = await _firestore
           .collection('chats')
           .where('userIds', arrayContains: userId1)
           .get();
+
       for (var doc in querySnapshot.docs) {
         List<dynamic> userIds = doc['userIds'];
         if (userIds.contains(userId2)) {
@@ -180,7 +131,21 @@ class ChatService {
       }
       return null;
     } catch (e) {
-      print('Error checking for existing chat: $e');
+      print("❌ Error getting existing chat ID: $e");
+      return null;
+    }
+  }
+
+  // Get username
+  Future<String?> getUsername(String userId) async {
+    try {
+      DocumentSnapshot userDoc = await _firestore.collection('users').doc(userId).get();
+      if (userDoc.exists) {
+        return userDoc['username'];
+      }
+      return null;
+    } catch (e) {
+      print("❌ Error getting username: $e");
       return null;
     }
   }

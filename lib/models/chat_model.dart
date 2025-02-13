@@ -4,22 +4,22 @@ class Chat {
   final String id;
   final String name;
   final String lastMessage;
-  final List<String> userIds;
+  final List<String> participants;
 
   Chat({
     required this.id,
     required this.name,
     required this.lastMessage,
-    required this.userIds,
+    required this.participants,
   });
 
   factory Chat.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    var data = doc.data() as Map<String, dynamic>;
     return Chat(
       id: doc.id,
-      name: data['name'] ?? '',
+      name: data['chatName'] ?? 'Unknown Chat',
       lastMessage: data['lastMessage'] ?? '',
-      userIds: List<String>.from(data['userIds']),
+      participants: List<String>.from(data['participants'] ?? []),
     );
   }
 }

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
 import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
-import 'package:flutter_chat_app/models/chat_model.dart';
-import 'chat_screen.dart';
 import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
-import 'package:flutter_chat_app/views/pending_requests_screen.dart'; // Import the PendingRequestsScreen
+import 'package:flutter_chat_app/views/pending_requests_screen.dart';
+import 'chat_screen.dart';
+import 'dart:async';
 
 class ChatListScreen extends StatefulWidget {
   @override
@@ -18,7 +19,59 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
-  Set<String> _selectedChats = Set<String>();
+  late StreamController<QuerySnapshot> _chatListController;
+
+  @override
+  void initState() {
+    super.initState();
+    _chatListController = StreamController<QuerySnapshot>();
+    _fetchChatList(); // Initial fetch
+  }
+
+  // Fetch latest chat list and add to stream
+  void _fetchChatList() async {
+    FirebaseFirestore.instance
+        .collection('chats')
+        .where('userIds', arrayContains: FirebaseAuth.instance.currentUser!.uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      _chatListController.add(snapshot);
+    });
+  }
+
+  @override
+  void dispose() {
+    _chatListController.close();
+    super.dispose();
+  }
+
+  // Fetch chat partner's name
+  Future<String> fetchChatPartnerName(List<String> userIds) async {
+    String currentUserId = FirebaseAuth.instance.currentUser!.uid;
+    String otherUserId = userIds.firstWhere(
+      (id) => id != currentUserId,
+      orElse: () => "Unknown",
+    );
+
+    if (otherUserId == "Unknown") return "Unknown";
+
+    try {
+      var userDoc = await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
+      if (userDoc.exists) {
+        return userDoc.data()?['username'] ?? 'Unknown';
+      }
+    } catch (e) {
+      debugPrint("Error fetching user: $e");
+    }
+    return "Unknown";
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _fetchChatList(); // 🔄 Refresh chat list when coming back from ChatScreen
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +81,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chat List'),
+        title: const Text('Chats'),
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add),
@@ -41,11 +94,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.notifications),
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => PendingRequestsScreen()),
               );
+              _fetchChatList(); // 🔄 Refresh chat list after returning
             },
           ),
           IconButton(
@@ -64,7 +118,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: <Widget>[
-            DrawerHeader(
+            const DrawerHeader(
               decoration: BoxDecoration(
                 color: Colors.deepPurple,
               ),
@@ -77,17 +131,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             ),
             ListTile(
-              leading: Icon(Icons.chat),
-              title: Text('Chats'),
+              leading: const Icon(Icons.chat),
+              title: const Text('Chats'),
               onTap: () {
                 Navigator.pop(context); // Close the drawer
               },
             ),
             ListTile(
-              leading: Icon(Icons.person),
-              title: Text('Profile'),
+              leading: const Icon(Icons.person),
+              title: const Text('Profile'),
               onTap: () {
-                Navigator.pop(context); // Close the drawer
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => ProfileScreen()),
@@ -95,10 +149,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
               },
             ),
             ListTile(
-              leading: Icon(Icons.settings),
-              title: Text('Settings'),
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
               onTap: () {
-                Navigator.pop(context); // Close the drawer
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => SettingsScreen()),
@@ -108,106 +162,60 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ],
         ),
       ),
-      body: StreamBuilder<List<Chat>>(
-        stream: _chatService.getUserChats(user!.uid),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: _chatListController.stream,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError) {
-            print('Error: ${snapshot.error}');
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('No chats available.'));
-          }
-          var chats = snapshot.data!;
+
+          var chatDocs = snapshot.data!.docs;
+          Set<String> displayedUsers = {}; // Track displayed users
+
           return ListView.builder(
-            itemCount: chats.length,
+            itemCount: chatDocs.length,
             itemBuilder: (context, index) {
-              var chat = chats[index];
-              bool isSelected = _selectedChats.contains(chat.id);
-              return GestureDetector(
-                onLongPress: () {
-                  setState(() {
-                    if (isSelected) {
-                      _selectedChats.remove(chat.id);
-                    } else {
-                      _selectedChats.add(chat.id);
-                    }
-                  });
-                },
-                child: Card(
-                  margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15.0),
-                  ),
-                  color: isSelected ? Colors.grey[300] : Colors.white,
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      child: Icon(Icons.person),
+              var chatData = chatDocs[index].data() as Map<String, dynamic>;
+              String chatId = chatDocs[index].id;
+              List<String> userIds = List<String>.from(chatData['userIds'] ?? []);
+
+              return FutureBuilder<String>(
+                future: fetchChatPartnerName(userIds),
+                builder: (context, nameSnapshot) {
+                  if (!nameSnapshot.hasData) {
+                    return const ListTile(title: Text("Loading..."));
+                  }
+
+                  String chatName = nameSnapshot.data!;
+                  if (displayedUsers.contains(chatName)) {
+                    return const SizedBox.shrink(); // Skip duplicate users
+                  }
+                  displayedUsers.add(chatName);
+
+                  return ListTile(
+                    title: Text(chatName),
+                    subtitle: Text(chatData['lastMessage'] ?? "Tap to open chat"),
+                    trailing: Text(
+                      chatData['createdAt'] != null
+                          ? DateTime.fromMillisecondsSinceEpoch(
+                              (chatData['createdAt'] as Timestamp).millisecondsSinceEpoch,
+                            ).toLocal().toString().split(' ')[0] // ✅ Show formatted date
+                          : '',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
-                    title: Text(
-                      chat.name,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(chat.lastMessage),
-                    trailing: isSelected
-                        ? PopupMenuButton<String>(
-                            onSelected: (String result) {
-                              setState(() {
-                                _selectedChats.remove(chat.id);
-                                // Handle the selected action
-                                switch (result) {
-                                  case 'Archive':
-                                    // Handle Archive action
-                                    break;
-                                  case 'Mute':
-                                    // Handle Mute action
-                                    break;
-                                  case 'Block':
-                                    // Handle Block action
-                                    break;
-                                  case 'Delete':
-                                    if (user != null) {
-                                      _chatService.deleteChat(chat.id, user!.uid);
-                                    }
-                                    break;
-                                }
-                              });
-                            },
-                            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                              const PopupMenuItem<String>(
-                                value: 'Archive',
-                                child: Text('Archive'),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'Mute',
-                                child: Text('Mute'),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'Block',
-                                child: Text('Block'),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'Delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                          )
-                        : null,
-                    onTap: () {
-                      if (!isSelected) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ChatScreen(chatId: chat.id),
-                          ),
-                        );
+                    onTap: () async {
+                      bool? shouldRefresh = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ChatScreen(chatId: chatId),
+                        ),
+                      );
+                      if (shouldRefresh == true) {
+                        _fetchChatList(); // 🔄 Refresh manually after returning
                       }
                     },
-                  ),
-                ),
+                  );
+                },
               );
             },
           );

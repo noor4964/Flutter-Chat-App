@@ -131,6 +131,12 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chat'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pop(context, true); // ✅ Pass `true` to notify ChatListScreen
+          },
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),

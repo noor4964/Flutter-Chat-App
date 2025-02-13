@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_chat_app/services/chat_service.dart';
-import 'package:flutter_chat_app/services/auth_service.dart';
+import '../services/chat_service.dart';
+import '../services/auth_service.dart';
 import 'package:flutter_chat_app/views/chat/chat_screen.dart';
+import 'dart:async';
 
 class UserListScreen extends StatefulWidget {
   @override
@@ -16,37 +17,44 @@ class _UserListScreenState extends State<UserListScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _searchResults = [];
+  Timer? _debounce;
 
-  void _searchUsers(String query) async {
-    if (query.isEmpty) {
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _searchUsers(String query) {
+    if (_debounce?.isActive ?? false) _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      if (query.isEmpty) {
+        setState(() => _searchResults = []);
+        return;
+      }
+
+      QuerySnapshot userSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .orderBy('username')
+          .startAt([query])
+          .endAt([query + '\uf8ff'])
+          .get();
+
       setState(() {
-        _searchResults = [];
+        _searchResults = userSnapshot.docs.map((doc) {
+          var data = doc.data() as Map<String, dynamic>;
+          data['uid'] = doc.id; // Ensure UID is included
+          return data;
+        }).toList();
       });
-      return;
-    }
-
-    QuerySnapshot userSnapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('username', isEqualTo: query)
-        .get();
-
-    setState(() {
-      _searchResults = userSnapshot.docs.map((doc) {
-        if (doc.exists) {
-          return doc.data() as Map<String, dynamic>;
-        } else {
-          return {};
-        }
-      }).toList().cast<Map<String, dynamic>>();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('User List'),
-      ),
+      appBar: AppBar(title: const Text('User List')),
       body: Column(
         children: [
           Padding(
@@ -55,57 +63,50 @@ class _UserListScreenState extends State<UserListScreen> {
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search by username',
-                suffixIcon: IconButton(
-                  icon: Icon(Icons.search),
-                  onPressed: () {
-                    _searchUsers(_searchController.text);
-                  },
-                ),
+                suffixIcon: Icon(Icons.search),
               ),
+              onChanged: _searchUsers, // Debounced live search
             ),
           ),
           Expanded(
             child: _searchResults.isEmpty
-                ? Center(child: Text('No users found'))
+                ? const Center(child: Text('No users found'))
                 : ListView.builder(
                     itemCount: _searchResults.length,
                     itemBuilder: (context, index) {
-                      var user = _searchResults[index];
-                      if (user.isEmpty) {
-                        return ListTile(
-                          title: Text('User not found'),
-                        );
-                      }
-                      String? userId = user['uid'];
+                      var searchedUser = _searchResults[index];
+                      String? userId = searchedUser['uid'];
+
                       if (userId == null) {
-                        return ListTile(
-                          title: Text('User ID is missing'),
-                        );
+                        return const ListTile(title: Text('User ID is missing'));
                       }
+
                       return ListTile(
-                        title: Text(user['username']),
-                        subtitle: Text(user['email']),
-                        leading: CircleAvatar(child: Text(user['username'][0])),
+                        title: Text(searchedUser['username']),
+                        subtitle: Text(searchedUser['email']),
+                        leading: CircleAvatar(child: Text(searchedUser['username'][0])),
                         trailing: IconButton(
-                          icon: Icon(Icons.person_add),
+                          icon: const Icon(Icons.person_add),
                           onPressed: () async {
                             await _authService.sendConnectionRequest(userId);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Connection request sent to ${user['username']}')),
+                              SnackBar(content: Text('Request sent to ${searchedUser['username']}')),
                             );
                           },
                         ),
                         onTap: () async {
-                          if (this.user == null) {
+                          if (user == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('User not logged in')),
+                              const SnackBar(content: Text('User not logged in')),
                             );
                             return;
                           }
-                          // Check if a chat already exists with the selected user
-                          String? existingChatId = await _chatService.getExistingChatId(this.user!.uid, userId);
+
+                          // Check if chat already exists
+                          String? existingChatId =
+                              await _chatService.getExistingChatId(user!.uid, userId);
+
                           if (existingChatId != null) {
-                            // Navigate to the existing chat
                             Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -113,11 +114,12 @@ class _UserListScreenState extends State<UserListScreen> {
                               ),
                             );
                           } else {
-                            // Create a new chat with the selected user
+                            // Create new chat
                             String chatId = (await _chatService.createChat(
-                              [this.user!.uid, userId],
-                              user['username'],
+                              [user!.uid, userId],
+                              searchedUser['username'],
                             ))!;
+
                             Navigator.push(
                               context,
                               MaterialPageRoute(
