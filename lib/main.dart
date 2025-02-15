@@ -6,6 +6,7 @@ import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
+import 'package:flutter_chat_app/services/navigator_observer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +34,7 @@ class MyApp extends StatelessWidget {
         '/userList': (context) => UserListScreen(),
         '/pendingRequests': (context) => PendingRequestsScreen(),
       },
+      navigatorObservers: [MyNavigatorObserver()],
     );
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../services/chat_service.dart';
 
 class PendingRequestsScreen extends StatefulWidget {
   @override
@@ -9,142 +8,121 @@ class PendingRequestsScreen extends StatefulWidget {
 }
 
 class _PendingRequestsScreenState extends State<PendingRequestsScreen> {
-  final User? user = FirebaseAuth.instance.currentUser;
-  final ChatService _chatService = ChatService();
-  late ScaffoldMessengerState scaffoldMessenger;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late Future<List<Map<String, dynamic>>> _pendingRequestsFuture;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    scaffoldMessenger = ScaffoldMessenger.of(context);
+  void initState() {
+    super.initState();
+    _pendingRequestsFuture = fetchPendingRequests();
+  }
+
+  Future<List<Map<String, dynamic>>> fetchPendingRequests() async {
+    String userId = _auth.currentUser!.uid;
+
+    // Step 1: Fetch all pending requests
+    QuerySnapshot requestSnapshot = await _firestore
+        .collection('connections')
+        .where('receiverId', isEqualTo: userId)
+        .where('status', isEqualTo: 'pending')
+        .get();
+
+    if (requestSnapshot.docs.isEmpty) return [];
+
+    // Step 2: Extract all sender IDs
+    List<String> senderIds = requestSnapshot.docs
+        .map((doc) => doc['senderId'] as String)
+        .toSet()
+        .toList(); // Remove duplicates
+
+    // Step 3: Fetch sender user details in a single query
+    QuerySnapshot userSnapshot = await _firestore
+        .collection('users')
+        .where('uid', whereIn: senderIds)
+        .get();
+
+    // Step 4: Create a combined list of connection requests with user details
+    Map<String, Map<String, dynamic>> userMap = {
+      for (var doc in userSnapshot.docs) doc['uid']: doc.data() as Map<String, dynamic>
+    };
+
+    return requestSnapshot.docs.map((doc) {
+      Map<String, dynamic> requestData = doc.data() as Map<String, dynamic>;
+      requestData['id'] = doc.id; // Include request document ID
+      requestData['senderDetails'] = userMap[requestData['senderId']] ?? {};
+      return requestData;
+    }).toList();
+  }
+
+  Future<void> acceptRequest(String requestId, String senderId) async {
+    try {
+      await _firestore.collection('connections').doc(requestId).update({
+        'status': 'accepted',
+      });
+
+      // Create a new chat for these users
+      await _firestore.collection('chats').add({
+        'userIds': [_auth.currentUser!.uid, senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      print("✅ Connection request accepted and chat created.");
+
+      // Refresh UI
+      setState(() {
+        _pendingRequestsFuture = fetchPendingRequests();
+      });
+    } catch (e) {
+      print("❌ Error accepting request: $e");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (user == null) {
-      return const Center(child: Text('User not authenticated.'));
-    }
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Pending Requests')),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('connections')
-            .where('receiverId', isEqualTo: user!.uid)
-            .where('status', isEqualTo: 'pending')
-            .snapshots(),
+      appBar: AppBar(title: Text("Pending Requests")),
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _pendingRequestsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("❌ Error loading requests"));
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(child: Text("No pending requests"));
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text('No pending requests.'));
-          }
-
-          var requests = snapshot.data!.docs;
+          List<Map<String, dynamic>> pendingRequests = snapshot.data!;
 
           return ListView.builder(
-            itemCount: requests.length,
+            itemCount: pendingRequests.length,
             itemBuilder: (context, index) {
-              var request = requests[index].data() as Map<String, dynamic>;
-              String senderId = request['senderId'] ?? 'Unknown';
-              String requestId = requests[index].id;
+              var request = pendingRequests[index];
+              var senderDetails = request['senderDetails'];
 
-              return FutureBuilder<DocumentSnapshot>(
-                future: FirebaseFirestore.instance.collection('users').doc(senderId).get(),
-                builder: (context, userSnapshot) {
-                  if (userSnapshot.connectionState == ConnectionState.waiting) {
-                    return ListTile(
-                      title: const Text("Loading..."),
-                      subtitle: Text('Request from $senderId'),
-                      trailing: _buildActionButtons(requestId, senderId, context, null),
-                    );
-                  }
-
-                  if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-                    return ListTile(
-                      title: const Text("Unknown User"),
-                      subtitle: Text('Request from $senderId'),
-                      trailing: _buildActionButtons(requestId, senderId, context, null),
-                    );
-                  }
-
-                  var userData = userSnapshot.data!.data() as Map<String, dynamic>?;
-                  return ListTile(
-                    title: Text(userData?['username'] ?? "Unknown User", style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text('Request from $senderId'),
-                    trailing: _buildActionButtons(requestId, senderId, context, userData),
-                  );
-                },
+              return Card(
+                margin: EdgeInsets.all(8),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    child: senderDetails['username'] != null
+                        ? Text(senderDetails['username'][0].toUpperCase())
+                        : Icon(Icons.person),
+                  ),
+                  title: Text(senderDetails['username'] ?? 'Unknown'),
+                  subtitle: Text(senderDetails['email'] ?? ''),
+                  trailing: ElevatedButton(
+                    onPressed: () => acceptRequest(request['id'], request['senderId']),
+                    child: Text("Accept"),
+                  ),
+                ),
               );
             },
           );
         },
       ),
     );
-  }
-
-  Widget _buildActionButtons(String requestId, String senderId, BuildContext context, Map<String, dynamic>? userData) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.check, color: Colors.green),
-          onPressed: () => acceptRequest(requestId, senderId, context),
-        ),
-        IconButton(
-          icon: const Icon(Icons.close, color: Colors.red),
-          onPressed: () => declineRequest(requestId, senderId, context, userData),
-        ),
-      ],
-    );
-  }
-
-  void acceptRequest(String requestId, String senderId, BuildContext context) async {
-    print("✅ Accept button clicked! Request ID: $requestId");
-
-    try {
-      await FirebaseFirestore.instance.collection('connections').doc(requestId).update({
-        'status': 'accepted',
-      });
-
-      // Create a chat document for both users
-      await _chatService.acceptConnectionRequest(requestId, senderId);
-
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(content: Text('Request accepted!')),
-      );
-    } on FirebaseException catch (e) {
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Error accepting request: ${e.message}')),
-      );
-      print("❌ Error accepting request: $e");
-    } catch (e) {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(content: Text('An unexpected error occurred.')),
-      );
-      print("❌ Unexpected error: $e");
-    }
-  }
-
-  void declineRequest(String requestId, String senderId, BuildContext context, Map<String, dynamic>? userData) async {
-    try {
-      await FirebaseFirestore.instance.collection('connections').doc(requestId).delete();
-
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Request from ${userData?['username'] ?? "Unknown User"} declined')),
-      );
-    } on FirebaseException catch (e) {
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Error declining request: ${e.message}')),
-      );
-      print("❌ Error declining request: $e");
-    } catch (e) {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(content: Text('An unexpected error occurred.')),
-      );
-      print("❌ Unexpected error: $e");
-    }
   }
 }

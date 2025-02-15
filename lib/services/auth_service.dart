@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // StreamController to manually trigger UI updates
+  final StreamController<bool> chatListController = StreamController<bool>.broadcast();
 
   // Sign in with email and password
   Future<User?> signInWithEmailAndPassword(String email, String password) async {
@@ -70,19 +74,19 @@ class AuthService {
   // Get chat user IDs
   Future<List<String>> getChatUserIds(String currentUserId) async {
     try {
-      QuerySnapshot chatSnapshot = await FirebaseFirestore.instance
+      QuerySnapshot chatSnapshot = await _firestore
           .collection('chats')
-          .where('userIds', arrayContains: currentUserId) // 🔥 Fetch only chats of the current user
+          .where('userIds', arrayContains: currentUserId)
           .get();
 
-      Set<String> userIds = {}; // Use a Set to avoid duplicates
+      Set<String> userIds = {};
       for (var doc in chatSnapshot.docs) {
         List<dynamic> chatUsers = doc['userIds'];
-        userIds.addAll(chatUsers.map((e) => e.toString())); // Ensure all are strings
+        userIds.addAll(chatUsers.map((e) => e.toString()));
       }
-      userIds.remove(currentUserId); // Remove self from the list
+      userIds.remove(currentUserId);
 
-      return userIds.toList(); // Convert Set back to List
+      return userIds.toList();
     } catch (e) {
       print("❌ Error fetching chat user IDs: $e");
       return [];
@@ -96,9 +100,9 @@ class AuthService {
     if (chatUserIds.isEmpty) return [];
 
     try {
-      QuerySnapshot userSnapshot = await FirebaseFirestore.instance
+      QuerySnapshot userSnapshot = await _firestore
           .collection('users')
-          .where('uid', whereIn: chatUserIds) // 🔥 Fetch only relevant users
+          .where('uid', whereIn: chatUserIds)
           .get();
 
       return userSnapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
@@ -110,9 +114,9 @@ class AuthService {
 
   // Send connection request
   Future<void> sendConnectionRequest(String receiverId) async {
-    String senderId = FirebaseAuth.instance.currentUser!.uid;
+    String senderId = _auth.currentUser!.uid;
 
-    await FirebaseFirestore.instance.collection('connections').add({
+    await _firestore.collection('connections').add({
       'senderId': senderId,
       'receiverId': receiverId,
       'status': 'pending',
@@ -120,25 +124,43 @@ class AuthService {
     });
   }
 
-  // Accept connection request
+  // Accept connection request and create chat
   Future<void> acceptConnectionRequest(String requestId, String receiverId) async {
-    await FirebaseFirestore.instance.collection('connections').doc(requestId).update({
-      'status': 'accepted',
-    });
+    print("Accepting connection request...");
+    try {
+      await _firestore.collection('connections').doc(requestId).update({
+        'status': 'accepted',
+      });
+      print("✅ Connection request accepted.");
 
-    // Create a chat document for both users
-    DocumentReference chatRef = FirebaseFirestore.instance.collection('chats').doc();
-    await chatRef.set({
-      'userIds': [FirebaseAuth.instance.currentUser!.uid, receiverId],
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+      // Create a chat document for both users
+      DocumentReference chatRef = _firestore.collection('chats').doc();
+      await chatRef.set({
+        'adminId': _auth.currentUser!.uid,
+        'chatPhotoUrl': '',
+        'createdAt': FieldValue.serverTimestamp(),
+        'isGroupChat': false,
+        'lastMessage': '',
+        'name': '',
+        'typing': {},
+        'userIds': [_auth.currentUser!.uid, receiverId],
+      });
+
+      print("✅ Chat document created with ID: ${chatRef.id}");
+
+      // Notify chat list to update
+      chatListController.add(true);
+
+    } catch (e) {
+      print("❌ Error accepting connection request: $e");
+    }
   }
 
   // Fetch pending connection requests
   Future<List<Map<String, dynamic>>> getPendingRequests() async {
-    String userId = FirebaseAuth.instance.currentUser!.uid;
+    String userId = _auth.currentUser!.uid;
     
-    QuerySnapshot query = await FirebaseFirestore.instance
+    QuerySnapshot query = await _firestore
         .collection('connections')
         .where('receiverId', isEqualTo: userId)
         .where('status', isEqualTo: 'pending')
@@ -146,8 +168,20 @@ class AuthService {
 
     return query.docs.map((doc) {
       var data = doc.data() as Map<String, dynamic>;
-      data['id'] = doc.id; // Include the document ID
+      data['id'] = doc.id;
       return data;
     }).toList();
-}
+  }
+
+  // Real-time chat list updates
+  Stream<List<Map<String, dynamic>>> getChatList() {
+    String currentUserId = _auth.currentUser!.uid;
+    
+    return _firestore
+        .collection('chats')
+        .where('userIds', arrayContains: currentUserId)
+        .snapshots()
+        .map((snapshot) =>
+            snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList());
+  }
 }

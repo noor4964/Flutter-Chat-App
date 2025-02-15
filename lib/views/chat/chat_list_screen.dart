@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
-import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/profile/profile_screen.dart';
@@ -10,6 +9,7 @@ import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'chat_screen.dart';
 import 'dart:async';
+import 'package:flutter_chat_app/services/navigator_observer.dart';
 
 class ChatListScreen extends StatefulWidget {
   @override
@@ -20,28 +20,38 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
   late StreamController<QuerySnapshot> _chatListController;
+  StreamSubscription<QuerySnapshot>? _chatsSubscription;
 
   @override
   void initState() {
     super.initState();
     _chatListController = StreamController<QuerySnapshot>();
-    _fetchChatList(); // Initial fetch
+    _fetchChatList();
   }
 
-  // Fetch latest chat list and add to stream
+  // Fetch latest chat list
   void _fetchChatList() async {
-    FirebaseFirestore.instance
+    print("Fetching chat list...");
+
+    await _chatsSubscription?.cancel();
+
+    _chatsSubscription = FirebaseFirestore.instance
         .collection('chats')
         .where('userIds', arrayContains: FirebaseAuth.instance.currentUser!.uid)
         .orderBy('createdAt', descending: true)
         .snapshots()
         .listen((snapshot) {
+      print("Chat list fetched: ${snapshot.docs.length} documents");
       _chatListController.add(snapshot);
+    }, onError: (error) {
+      print("Error fetching chat list: $error");
     });
   }
 
   @override
   void dispose() {
+    print("Disposing ChatListScreen...");
+    _chatsSubscription?.cancel();
     _chatListController.close();
     super.dispose();
   }
@@ -57,7 +67,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (otherUserId == "Unknown") return "Unknown";
 
     try {
-      var userDoc = await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
+      var userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
       if (userDoc.exists) {
         return userDoc.data()?['username'] ?? 'Unknown';
       }
@@ -70,7 +81,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _fetchChatList(); // 🔄 Refresh chat list when coming back from ChatScreen
+    print("Dependencies changed, registering observer for navigation...");
+
+    // Register callback with NavigatorObserver
+    final observer = Navigator.of(context).widget.observers
+        .firstWhere((obs) => obs is MyNavigatorObserver) as MyNavigatorObserver;
+    observer.setCallback(() {
+      setState(() {
+        _fetchChatList(); // 🔄 Refresh chat list on return
+      });
+    });
+  }
+
+  Future<void> signOutUser() async {
+    print("Signing out user...");
+    await _chatsSubscription?.cancel();
+    await FirebaseAuth.instance.signOut();
+    print("✅ User signed out successfully");
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => LoginScreen()),
+    );
   }
 
   @override
@@ -104,13 +135,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await AuthService().signOut();
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => LoginScreen()),
-              );
-            },
+            onPressed: signOutUser,
           ),
         ],
       ),
@@ -134,7 +159,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               leading: const Icon(Icons.chat),
               title: const Text('Chats'),
               onTap: () {
-                Navigator.pop(context); // Close the drawer
+                Navigator.pop(context);
               },
             ),
             ListTile(
@@ -170,7 +195,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           }
 
           var chatDocs = snapshot.data!.docs;
-          Set<String> displayedUsers = {}; // Track displayed users
+          Set<String> displayedUsers = {};
 
           return ListView.builder(
             itemCount: chatDocs.length,
@@ -188,7 +213,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
                   String chatName = nameSnapshot.data!;
                   if (displayedUsers.contains(chatName)) {
-                    return const SizedBox.shrink(); // Skip duplicate users
+                    return const SizedBox.shrink();
                   }
                   displayedUsers.add(chatName);
 
@@ -198,8 +223,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     trailing: Text(
                       chatData['createdAt'] != null
                           ? DateTime.fromMillisecondsSinceEpoch(
-                              (chatData['createdAt'] as Timestamp).millisecondsSinceEpoch,
-                            ).toLocal().toString().split(' ')[0] // ✅ Show formatted date
+                                  (chatData['createdAt'] as Timestamp)
+                                      .millisecondsSinceEpoch)
+                              .toLocal()
+                              .toString()
+                              .split(' ')[0]
                           : '',
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
@@ -211,7 +239,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ),
                       );
                       if (shouldRefresh == true) {
-                        _fetchChatList(); // 🔄 Refresh manually after returning
+                        _fetchChatList();
                       }
                     },
                   );
