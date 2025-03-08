@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -15,6 +19,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _usernameController;
   late TextEditingController _emailController;
   late TextEditingController _genderController;
+  String? _profilePictureUrl;
 
   @override
   void initState() {
@@ -36,11 +41,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadUserProfile() async {
     if (user != null) {
       DocumentSnapshot userDoc = await _firestore.collection('users').doc(user!.uid).get();
-      setState(() {
-        _usernameController.text = userDoc['username'] ?? '';
-        _emailController.text = userDoc['email'] ?? '';
-        _genderController.text = userDoc['gender'] ?? '';
-      });
+      var userData = userDoc.data() as Map<String, dynamic>?;
+      if (mounted) {
+        setState(() {
+          _usernameController.text = userData?['username'] ?? '';
+          _emailController.text = userData?['email'] ?? '';
+          _genderController.text = userData?['gender'] ?? '';
+          _profilePictureUrl = userData?['profileImageUrl'] ?? null;
+        });
+      }
     }
   }
 
@@ -51,10 +60,84 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'email': _emailController.text,
         'gender': _genderController.text,
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Profile updated successfully')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Profile updated successfully')),
+        );
+      }
     }
+  }
+
+  Future<void> _pickImage() async {
+    final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _imageFile = File(pickedFile.path);
+      });
+      // Upload the image to Cloudinary and update the user's profile picture URL
+      await _uploadProfilePicture();
+    }
+  }
+
+  Future<void> _uploadProfilePicture() async {
+    if (_imageFile != null && user != null) {
+      try {
+        // Upload the image to Cloudinary
+        String uploadUrl = 'https://api.cloudinary.com/v1_1/daekv7k8q/image/upload';
+        String apiKey = '354918315997393';
+        String apiSecret = 'J9RlhhbDDovsyNpOGz67futNGj0';
+        String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+
+        var request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
+        request.fields['api_key'] = apiKey;
+        request.fields['timestamp'] = timestamp;
+        request.fields['signature'] = _generateSignature(apiSecret, timestamp, 'profile_picture');
+        request.fields['upload_preset'] = 'profile_picture';
+        request.files.add(await http.MultipartFile.fromPath('file', _imageFile!.path));
+
+        var response = await request.send();
+        var responseData = await http.Response.fromStream(response);
+
+        print('Response status: ${response.statusCode}');
+        print('Response body: ${responseData.body}');
+
+        if (response.statusCode == 200) {
+          var responseDataJson = json.decode(responseData.body);
+          String downloadUrl = responseDataJson['secure_url'];
+
+          // Update the user's profile picture URL in Firestore
+          await _firestore.collection('users').doc(user!.uid).update({
+            'profileImageUrl': downloadUrl,
+          });
+
+          if (mounted) {
+            setState(() {
+              _profilePictureUrl = downloadUrl;
+            });
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Profile picture updated successfully')),
+            );
+          }
+        } else {
+          print('Failed to upload profile picture: ${responseData.body}');
+          throw Exception('Failed to upload profile picture');
+        }
+      } catch (e) {
+        print('Exception: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to upload profile picture: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  String _generateSignature(String apiSecret, String timestamp, String uploadPreset) {
+    var bytes = utf8.encode('timestamp=$timestamp&upload_preset=$uploadPreset$apiSecret');
+    var digest = sha1.convert(bytes);
+    return digest.toString();
   }
 
   @override
@@ -67,10 +150,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: <Widget>[
-            CircleAvatar(
-              radius: 50,
-              backgroundImage: _imageFile != null ? FileImage(_imageFile!) : null,
-              child: _imageFile == null ? Icon(Icons.person, size: 50) : null,
+            GestureDetector(
+              onTap: _pickImage,
+              child: CircleAvatar(
+                radius: 50,
+                backgroundImage: _imageFile != null
+                    ? FileImage(_imageFile!)
+                    : (_profilePictureUrl != null
+                        ? NetworkImage(_profilePictureUrl!)
+                        : null),
+                child: _imageFile == null && _profilePictureUrl == null
+                    ? Icon(Icons.person, size: 50)
+                    : null,
+              ),
             ),
             SizedBox(height: 20),
             TextField(

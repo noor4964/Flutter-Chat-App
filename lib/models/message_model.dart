@@ -5,14 +5,17 @@ class Message {
   final String text;
   final DateTime timestamp;
   final String currentUserId;
+  final List<String> readBy;
 
   bool get isMe => sender == currentUserId;
+  bool get isRead => readBy.contains(currentUserId);
 
   Message({
     required this.sender,
     required this.text,
     required this.timestamp,
     required this.currentUserId,
+    required this.readBy,
   });
 
   factory Message.fromJson(Map<String, dynamic> json, String currentUserId) {
@@ -21,6 +24,7 @@ class Message {
       text: json['text'],
       timestamp: (json['timestamp'] as Timestamp).toDate(),
       currentUserId: currentUserId,
+      readBy: List<String>.from(json['readBy'] ?? []),
     );
   }
 
@@ -29,6 +33,7 @@ class Message {
       'sender': sender,
       'text': text,
       'timestamp': timestamp.toIso8601String(),
+      'readBy': readBy,
     };
   }
 }

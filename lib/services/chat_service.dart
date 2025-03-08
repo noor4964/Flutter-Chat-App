@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_chat_app/models/chat_model.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
 
 class ChatService {
@@ -16,6 +15,7 @@ class ChatService {
         'sender': userId,
         'text': message,
         'timestamp': FieldValue.serverTimestamp(),
+        'readBy': [],
       });
       await _firestore.collection('chats').doc(chatId).update({
         'lastMessage': message,
@@ -23,6 +23,26 @@ class ChatService {
       });
     } catch (e) {
       print('Error sending message: $e');
+    }
+  }
+
+  // Mark messages as read
+  Future<void> markMessagesAsRead(String chatId, String userId) async {
+    try {
+      QuerySnapshot messagesSnapshot = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .where('readBy', arrayContains: userId)
+          .get();
+
+      for (var doc in messagesSnapshot.docs) {
+        await doc.reference.update({
+          'readBy': FieldValue.arrayUnion([userId]),
+        });
+      }
+    } catch (e) {
+      print('Error marking messages as read: $e');
     }
   }
 
@@ -34,7 +54,48 @@ class ChatService {
         .collection('messages')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Message.fromJson(doc.data(), currentUserId)).toList());
+        .map((snapshot) => snapshot.docs.map((doc) {
+              final data = doc.data() as Map<String, dynamic>?; // Ensure data is not null
+              if (data != null) {
+                return Message.fromJson(data, currentUserId);
+              } else {
+                throw Exception('Message data is null');
+              }
+            }).toList());
+  }
+
+  // Get username
+  Future<String?> getUsername(String userId) async {
+    try {
+      DocumentSnapshot userDoc = await _firestore.collection('users').doc(userId).get();
+      if (userDoc.exists) {
+        final data = userDoc.data() as Map<String, dynamic>?; // Ensure data is not null
+        return data?['username'];
+      }
+    } catch (e) {
+      print('Error fetching username: $e');
+    }
+    return null;
+  }
+
+  // Get existing chat ID
+  Future<String?> getExistingChatId(String currentUserId, String otherUserId) async {
+    try {
+      QuerySnapshot chatSnapshot = await _firestore
+          .collection('chats')
+          .where('userIds', arrayContains: currentUserId)
+          .get();
+
+      for (var doc in chatSnapshot.docs) {
+        List<dynamic> userIds = doc['userIds'];
+        if (userIds.contains(otherUserId)) {
+          return doc.id;
+        }
+      }
+    } catch (e) {
+      print('Error fetching existing chat ID: $e');
+    }
+    return null;
   }
 
   // Create a new chat
@@ -49,103 +110,6 @@ class ChatService {
       return chatRef.id;
     } catch (e) {
       print('Error creating chat: $e');
-      return null;
-    }
-  }
-
-  // Get user chats
-  Stream<List<Chat>> getUserChats(String userId) {
-    return _firestore
-        .collection('chats')
-        .where('userIds', arrayContains: userId)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Chat.fromFirestore(doc)).toList());
-  }
-
-  // Accept connection request
-  Future<void> acceptConnectionRequest(String requestId, String senderId) async {
-    User? user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      print("❌ User not logged in!");
-      return;
-    }
-
-    try {
-      await _firestore.runTransaction((transaction) async {
-        DocumentReference connectionRef = _firestore.collection('connections').doc(requestId);
-        DocumentSnapshot connectionDoc = await transaction.get(connectionRef);
-
-        if (connectionDoc.exists) {
-          transaction.update(connectionRef, {'status': 'accepted'});
-
-          // Create a chat document for both users
-          DocumentReference chatRef = _firestore.collection('chats').doc();
-          transaction.set(chatRef, {
-            'userIds': [user.uid, senderId],
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-
-          print("✅ Connection accepted and chat created!");
-        }
-      });
-    } catch (e) {
-      print("❌ Error accepting connection: $e");
-    }
-  }
-
-  // Delete a chat
-  Future<void> deleteChat(String chatId, String userId) async {
-    try {
-      DocumentReference chatRef = _firestore.collection('chats').doc(chatId);
-      DocumentSnapshot chatDoc = await chatRef.get();
-
-      if (chatDoc.exists) {
-        List<dynamic> userIds = chatDoc['userIds'];
-        if (userIds.contains(userId)) {
-          await chatRef.delete();
-          print("✅ Chat deleted!");
-        } else {
-          print("❌ User not authorized to delete this chat!");
-        }
-      } else {
-        print("❌ Chat does not exist!");
-      }
-    } catch (e) {
-      print("❌ Error deleting chat: $e");
-    }
-  }
-
-  // Get existing chat ID
-  Future<String?> getExistingChatId(String userId1, String userId2) async {
-    try {
-      QuerySnapshot querySnapshot = await _firestore
-          .collection('chats')
-          .where('userIds', arrayContains: userId1)
-          .get();
-
-      for (var doc in querySnapshot.docs) {
-        List<dynamic> userIds = doc['userIds'];
-        if (userIds.contains(userId2)) {
-          return doc.id;
-        }
-      }
-      return null;
-    } catch (e) {
-      print("❌ Error getting existing chat ID: $e");
-      return null;
-    }
-  }
-
-  // Get username
-  Future<String?> getUsername(String userId) async {
-    try {
-      DocumentSnapshot userDoc = await _firestore.collection('users').doc(userId).get();
-      if (userDoc.exists) {
-        return userDoc['username'];
-      }
-      return null;
-    } catch (e) {
-      print("❌ Error getting username: $e");
       return null;
     }
   }

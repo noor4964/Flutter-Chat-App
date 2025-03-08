@@ -5,6 +5,7 @@ class MessageBubble extends StatelessWidget {
   final String text;
   final DateTime timestamp;
   final bool isMe;
+  final bool isRead;
 
   const MessageBubble({
     super.key,
@@ -12,6 +13,7 @@ class MessageBubble extends StatelessWidget {
     required this.text,
     required this.timestamp,
     required this.isMe,
+    required this.isRead,
   });
 
   @override
@@ -52,15 +54,33 @@ class MessageBubble extends StatelessWidget {
                     style: TextStyle(
                       color: isMe ? Colors.white : Colors.black54,
                       fontSize: 15.0,
+                      fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 5.0),
-                  Text(
-                    '${timestamp.hour}:${timestamp.minute}',
-                    style: TextStyle(
-                      color: isMe ? Colors.white70 : Colors.black38,
-                      fontSize: 10.0,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${timestamp.hour}:${timestamp.minute}',
+                        style: TextStyle(
+                          color: isMe ? Colors.white70 : Colors.black38,
+                          fontSize: 10.0,
+                        ),
+                      ),
+                      if (isMe && isRead)
+                        const Icon(
+                          Icons.done_all,
+                          color: Colors.white70,
+                          size: 14.0,
+                        ),
+                      if (isMe && !isRead)
+                        const Icon(
+                          Icons.done,
+                          color: Colors.white70,
+                          size: 14.0,
+                        ),
+                    ],
                   ),
                 ],
               ),

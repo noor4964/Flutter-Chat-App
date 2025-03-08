@@ -29,6 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _loadChatPersonDetails();
     _cacheUsernames();
+    _markMessagesAsRead();
   }
 
   @override
@@ -84,6 +85,12 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
       }
+    }
+  }
+
+  Future<void> _markMessagesAsRead() async {
+    if (user != null) {
+      await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
     }
   }
 
@@ -171,6 +178,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           text: message.text,
                           timestamp: message.timestamp,
                           isMe: message.isMe,
+                          isRead: message.isRead,
                         );
                       },
                     );

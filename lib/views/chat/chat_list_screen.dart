@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,7 +9,6 @@ import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'chat_screen.dart';
-import 'dart:async';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -19,7 +19,7 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
-  late StreamSubscription<QuerySnapshot> _chatsSubscription;
+  StreamSubscription<QuerySnapshot>? _chatsSubscription;
   QuerySnapshot? _lastSnapshot; // Holds the most recent data
 
   @override
@@ -56,26 +56,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
     super.dispose();
   }
 
-  // Fetch chat partner's name
-  Future<String> fetchChatPartnerName(List<String> userIds) async {
+  // Fetch chat partner's name and profile picture URL
+  Future<Map<String, String>> fetchChatPartnerInfo(List<String> userIds) async {
     String currentUserId = FirebaseAuth.instance.currentUser!.uid;
     String otherUserId = userIds.firstWhere(
       (id) => id != currentUserId,
       orElse: () => "Unknown",
     );
 
-    if (otherUserId == "Unknown") return "Unknown";
+    if (otherUserId == "Unknown") return {"name": "Unknown", "profileImageUrl": ""};
 
     try {
       var userDoc =
           await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
       if (userDoc.exists) {
-        return userDoc.data()?['username'] ?? 'Unknown';
+        return {
+          "name": userDoc.data()?['username'] ?? 'Unknown',
+          "profileImageUrl": userDoc.data()?['profileImageUrl'] ?? ''
+        };
       }
     } catch (e) {
       debugPrint("Error fetching user: $e");
     }
-    return "Unknown";
+    return {"name": "Unknown", "profileImageUrl": ""};
   }
 
   @override
@@ -196,28 +199,40 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 String chatId = _lastSnapshot!.docs[index].id;
                 List<String> userIds = List<String>.from(chatData['userIds'] ?? []);
 
-                return FutureBuilder<String>(
-                  future: fetchChatPartnerName(userIds),
-                  builder: (context, nameSnapshot) {
-                    if (nameSnapshot.hasError) {
-                      return const ListTile(title: Text("Error loading name"));
+                return FutureBuilder<Map<String, String>>(
+                  future: fetchChatPartnerInfo(userIds),
+                  builder: (context, infoSnapshot) {
+                    if (infoSnapshot.hasError) {
+                      return const ListTile(title: Text("Error loading info"));
                     }
-                    if (!nameSnapshot.hasData) {
+                    if (!infoSnapshot.hasData) {
                       return const ListTile(title: Text("Loading..."));
                     }
 
-                    String chatName = nameSnapshot.data!;
+                    String chatName = infoSnapshot.data!["name"]!;
+                    String profileImageUrl = infoSnapshot.data!["profileImageUrl"]!;
+                    bool isRead = chatData['lastMessageReadBy']?.contains(user!.uid) ?? false;
                     return Card(
                       margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                       child: ListTile(
                         leading: CircleAvatar(
+                          backgroundImage: profileImageUrl.isNotEmpty
+                              ? NetworkImage(profileImageUrl)
+                              : null,
                           backgroundColor: Colors.grey[300],
-                          child: Text(
-                            chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
-                            style: const TextStyle(color: Colors.white),
+                          child: profileImageUrl.isEmpty
+                              ? Text(
+                                  chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: Colors.white),
+                                )
+                              : null,
+                        ),
+                        title: Text(
+                          chatName,
+                          style: TextStyle(
+                            fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
                           ),
                         ),
-                        title: Text(chatName),
                         subtitle: Text(chatData['lastMessage'] ?? "Tap to open chat"),
                         trailing: Text(
                           chatData['createdAt'] != null
