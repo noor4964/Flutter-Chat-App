@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseDatabase _database = FirebaseDatabase.instance;
 
   // StreamController to manually trigger UI updates
   final StreamController<bool> chatListController = StreamController<bool>.broadcast();
@@ -13,6 +15,12 @@ class AuthService {
   Future<User?> signInWithEmailAndPassword(String email, String password) async {
     try {
       UserCredential result = await _auth.signInWithEmailAndPassword(email: email, password: password);
+      User? user = result.user;
+
+      if (user != null) {
+        _updateUserOnlineStatus(user.uid, true);
+      }
+
       print('✅ User signed in: ${result.user?.uid}');
       return result.user;
     } on FirebaseAuthException catch (e) {
@@ -42,6 +50,7 @@ class AuthService {
         'email': email,
         'gender': gender,
         'createdAt': FieldValue.serverTimestamp(),
+        'isOnline': true, // Set initial online status to true
       });
 
       return user;
@@ -54,11 +63,22 @@ class AuthService {
   // Sign out
   Future<void> signOut() async {
     try {
+      User? user = _auth.currentUser;
+      if (user != null) {
+        _updateUserOnlineStatus(user.uid, false);
+      }
       await _auth.signOut();
       print('✅ User signed out successfully');
     } on FirebaseAuthException catch (e) {
       print('❌ Sign-out error: ${e.code} - ${e.message}');
     }
+  }
+
+  // Update user's online status
+  void _updateUserOnlineStatus(String userId, bool isOnline) {
+    _firestore.collection('users').doc(userId).update({
+      'isOnline': isOnline,
+    });
   }
 
   // Get current user

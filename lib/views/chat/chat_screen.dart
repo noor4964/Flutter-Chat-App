@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
 import 'package:flutter_chat_app/widgets/message_bubble.dart';
+import 'package:flutter_chat_app/views/user_profile_screen.dart'; // Import UserProfileScreen
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -21,6 +22,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _chatPersonName;
   String? _chatPersonEmail;
   String? _chatPersonAvatarUrl;
+  bool _chatPersonIsOnline = false;
   Map<String, String> _usernamesCache = {};
   BuildContext? _ancestorContext;
 
@@ -57,8 +59,10 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _chatPersonName = userData?['username'];
               _chatPersonEmail = userData?['email'];
-              _chatPersonAvatarUrl = userData != null && userData.containsKey('avatarUrl') ? userData['avatarUrl'] : null;
+              _chatPersonAvatarUrl = userData != null && userData.containsKey('profileImageUrl') ? userData['profileImageUrl'] : null;
+              _chatPersonIsOnline = userData?['isOnline'] ?? false;
             });
+            print('Avatar URL: $_chatPersonAvatarUrl'); // Debugging statement
           } else {
             print('User document does not exist');
           }
@@ -96,40 +100,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _showChatPersonDetails() {
     if (!mounted) return; // Ensure the widget is still mounted
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Chat Person Details'),
-          content: _chatPersonName != null && _chatPersonEmail != null
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_chatPersonAvatarUrl != null)
-                      CircleAvatar(
-                        backgroundImage: NetworkImage(_chatPersonAvatarUrl!),
-                        radius: 40,
-                      ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Name: $_chatPersonName',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 5),
-                    Text('Email: $_chatPersonEmail'),
-                  ],
-                )
-              : const CircularProgressIndicator(),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => UserProfileScreen(
+          profileImageUrl: _chatPersonAvatarUrl ?? '',
+          username: _chatPersonName ?? 'Loading...',
+          isOnline: _chatPersonIsOnline,
+        ),
+      ),
     );
   }
 
@@ -137,30 +116,69 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chat'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
             Navigator.pop(context, true); // ✅ Pass `true` to notify ChatListScreen
           },
         ),
+        title: Row(
+          children: [
+            GestureDetector(
+              onTap: _showChatPersonDetails,
+              child: CircleAvatar(
+                backgroundImage: _chatPersonAvatarUrl != null ? NetworkImage(_chatPersonAvatarUrl!) : null,
+                child: _chatPersonAvatarUrl == null ? const Icon(Icons.person) : null,
+              ),
+            ),
+            const SizedBox(width: 10),
+            GestureDetector(
+              onTap: _showChatPersonDetails,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _chatPersonName ?? 'Loading...',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    _chatPersonIsOnline ? 'Active now' : 'Offline',
+                    style: TextStyle(fontSize: 12, color: _chatPersonIsOnline ? Colors.green : Colors.red),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.call),
+            onPressed: () {
+              // Handle call action
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.videocam),
+            onPressed: () {
+              // Handle video call action
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.info_outline),
             onPressed: _showChatPersonDetails,
           ),
         ],
       ),
-      body: FutureBuilder<void>(
-        future: _cacheUsernames(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          return Column(
-            children: <Widget>[
-              Expanded(
-                child: StreamBuilder<List<Message>>(
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: FutureBuilder<void>(
+              future: _cacheUsernames(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return StreamBuilder<List<Message>>(
                   stream: _chatService.getMessages(widget.chatId, user!.uid),
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) {
@@ -183,44 +201,44 @@ class _ChatScreenState extends State<ChatScreen> {
                       },
                     );
                   },
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: 'Enter your message...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(15.0),
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[200],
-                        ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    decoration: InputDecoration(
+                      hintText: 'Enter your message...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(15.0),
                       ),
+                      filled: true,
+                      fillColor: Colors.grey[200],
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.send),
-                      onPressed: () {
-                        if (_messageController.text.isNotEmpty) {
-                          _chatService.sendMessage(
-                            widget.chatId,
-                            user!.uid,
-                            _messageController.text,
-                          );
-                          _messageController.clear();
-                        }
-                      },
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
+                IconButton(
+                  icon: const Icon(Icons.send),
+                  onPressed: () {
+                    if (_messageController.text.isNotEmpty) {
+                      _chatService.sendMessage(
+                        widget.chatId,
+                        user!.uid,
+                        _messageController.text,
+                      );
+                      _messageController.clear();
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
