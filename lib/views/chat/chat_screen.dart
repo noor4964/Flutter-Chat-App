@@ -20,11 +20,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
   String? _chatPersonName;
-  String? _chatPersonEmail;
   String? _chatPersonAvatarUrl;
   bool _chatPersonIsOnline = false;
   Map<String, String> _usernamesCache = {};
-  BuildContext? _ancestorContext;
 
   @override
   void initState() {
@@ -35,12 +33,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _ancestorContext = context;
-  }
-
-  @override
   void dispose() {
     _messageController.dispose();
     super.dispose();
@@ -48,18 +40,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadChatPersonDetails() async {
     if (user != null) {
-      DocumentSnapshot chatDoc = await _chatService.firestore.collection('chats').doc(widget.chatId).get();
+      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
       if (chatDoc.exists) {
         List<dynamic> userIds = chatDoc['userIds'];
-        String? chatPersonId = userIds.firstWhere((id) => id != user!.uid, orElse: () => null);
-        if (chatPersonId != null) {
-          DocumentSnapshot userDoc = await _chatService.firestore.collection('users').doc(chatPersonId).get();
+        String chatPersonId = "";
+
+        for (var id in userIds) {
+          if (id != user!.uid) {
+            chatPersonId = id;
+            break;
+          }
+        }
+
+        if (chatPersonId.isNotEmpty) {
+          DocumentSnapshot userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(chatPersonId)
+              .get();
           if (userDoc.exists && mounted) {
             final userData = userDoc.data() as Map<String, dynamic>?;
             setState(() {
               _chatPersonName = userData?['username'];
-              _chatPersonEmail = userData?['email'];
-              _chatPersonAvatarUrl = userData != null && userData.containsKey('profileImageUrl') ? userData['profileImageUrl'] : null;
+              _chatPersonAvatarUrl =
+                  userData != null && userData.containsKey('profileImageUrl')
+                      ? userData['profileImageUrl']
+                      : null;
               _chatPersonIsOnline = userData?['isOnline'] ?? false;
             });
             print('Avatar URL: $_chatPersonAvatarUrl'); // Debugging statement
@@ -77,15 +85,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _cacheUsernames() async {
     if (user != null) {
-      DocumentSnapshot chatDoc = await _chatService.firestore.collection('chats').doc(widget.chatId).get();
+      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
       if (chatDoc.exists) {
         List<dynamic> userIds = chatDoc['userIds'];
         for (String userId in userIds) {
           if (userId != user!.uid) {
-            String? username = await _chatService.getUsername(userId);
-            if (username != null) {
-              _usernamesCache[userId] = username;
-            }
+            String username = await _chatService.getUsername(userId);
+            _usernamesCache[userId] = username;
           }
         }
       }
@@ -119,7 +128,8 @@ class _ChatScreenState extends State<ChatScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            Navigator.pop(context, true); // ✅ Pass `true` to notify ChatListScreen
+            Navigator.pop(
+                context, true); // ✅ Pass `true` to notify ChatListScreen
           },
         ),
         title: Row(
@@ -127,8 +137,12 @@ class _ChatScreenState extends State<ChatScreen> {
             GestureDetector(
               onTap: _showChatPersonDetails,
               child: CircleAvatar(
-                backgroundImage: _chatPersonAvatarUrl != null ? NetworkImage(_chatPersonAvatarUrl!) : null,
-                child: _chatPersonAvatarUrl == null ? const Icon(Icons.person) : null,
+                backgroundImage: _chatPersonAvatarUrl != null
+                    ? NetworkImage(_chatPersonAvatarUrl!)
+                    : null,
+                child: _chatPersonAvatarUrl == null
+                    ? const Icon(Icons.person)
+                    : null,
               ),
             ),
             const SizedBox(width: 10),
@@ -139,11 +153,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Text(
                     _chatPersonName ?? 'Loading...',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   Text(
                     _chatPersonIsOnline ? 'Active now' : 'Offline',
-                    style: TextStyle(fontSize: 12, color: _chatPersonIsOnline ? Colors.green : Colors.red),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: _chatPersonIsOnline ? Colors.green : Colors.red),
                   ),
                 ],
               ),
@@ -190,7 +207,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
                         var message = messages[index];
-                        String senderName = _usernamesCache[message.sender] ?? 'Unknown';
+                        String senderName =
+                            _usernamesCache[message.sender] ?? 'Unknown';
                         return MessageBubble(
                           sender: senderName,
                           text: message.text,
@@ -228,8 +246,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (_messageController.text.isNotEmpty) {
                       _chatService.sendMessage(
                         widget.chatId,
-                        user!.uid,
                         _messageController.text,
+                        user!.uid,
                       );
                       _messageController.clear();
                     }

@@ -12,6 +12,15 @@ import 'chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
 
 class ChatListScreen extends StatefulWidget {
+  final bool isDesktop;
+  final Function(String chatId, String chatName)? onChatSelected;
+
+  const ChatListScreen({
+    Key? key,
+    this.isDesktop = false,
+    this.onChatSelected,
+  }) : super(key: key);
+
   @override
   _ChatListScreenState createState() => _ChatListScreenState();
 }
@@ -21,6 +30,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
   StreamSubscription<QuerySnapshot>? _chatsSubscription;
   QuerySnapshot? _lastSnapshot; // Holds the most recent data
+  String? _selectedChatId;
 
   @override
   void initState() {
@@ -64,11 +74,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
       orElse: () => "Unknown",
     );
 
-    if (otherUserId == "Unknown") return {"name": "Unknown", "profileImageUrl": ""};
+    if (otherUserId == "Unknown")
+      return {"name": "Unknown", "profileImageUrl": ""};
 
     try {
-      var userDoc =
-          await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
+      var userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(otherUserId)
+          .get();
       if (userDoc.exists) {
         return {
           "name": userDoc.data()?['username'] ?? 'Unknown',
@@ -86,14 +99,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
     super.didChangeDependencies();
     print("Dependencies changed, registering observer for navigation...");
 
-    // Register callback with NavigatorObserver
-    final observer = Navigator.of(context).widget.observers
-        .firstWhere((obs) => obs is MyNavigatorObserver) as MyNavigatorObserver;
-    observer.setCallback(() {
-      setState(() {
-        _fetchChatList(); // 🔄 Refresh chat list on return
+    // Only register navigation observer if not in desktop mode
+    if (!widget.isDesktop) {
+      // Register callback with NavigatorObserver
+      final observer = Navigator.of(context)
+              .widget
+              .observers
+              .firstWhere((obs) => obs is MyNavigatorObserver)
+          as MyNavigatorObserver;
+      observer.setCallback(() {
+        setState(() {
+          _fetchChatList(); // 🔄 Refresh chat list on return
+        });
       });
-    });
+    }
   }
 
   Future<void> signOutUser() async {
@@ -114,154 +133,303 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chats'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => UserListScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.notifications),
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => PendingRequestsScreen()),
-              );
-              _fetchChatList(); // 🔄 Refresh chat list after returning
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: signOutUser,
+      appBar: widget.isDesktop
+          ? AppBar(
+              title: const Text('Conversations'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.person_add),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => UserListScreen()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.notifications),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => PendingRequestsScreen()),
+                    );
+                    _fetchChatList();
+                  },
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('Chats'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.person_add),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => UserListScreen()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.notifications),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => PendingRequestsScreen()),
+                    );
+                    _fetchChatList();
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  onPressed: signOutUser,
+                ),
+              ],
+            ),
+      drawer: widget.isDesktop
+          ? null
+          : Drawer(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: <Widget>[
+                  const DrawerHeader(
+                    decoration: BoxDecoration(
+                      color: Colors.deepPurple,
+                    ),
+                    child: Text(
+                      'Menu',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                      ),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.chat),
+                    title: const Text('Chats'),
+                    onTap: () {
+                      Navigator.pop(context);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.person),
+                    title: const Text('Profile'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ProfileScreen()),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.settings),
+                    title: const Text('Settings'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => SettingsScreen()),
+                      );
+                    },
+                  ),
+                  if (widget.isDesktop)
+                    ListTile(
+                      leading: const Icon(Icons.logout),
+                      title: const Text('Logout'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        signOutUser();
+                      },
+                    ),
+                ],
+              ),
+            ),
+      body: Column(
+        children: [
+          if (widget.isDesktop)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.menu),
+                    onPressed: () {
+                      showModalBottomSheet(
+                        context: context,
+                        builder: (context) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ListTile(
+                              leading: const Icon(Icons.person),
+                              title: const Text('Profile'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (context) => ProfileScreen()),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.settings),
+                              title: const Text('Settings'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (context) => SettingsScreen()),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.logout),
+                              title: const Text('Logout'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                signOutUser();
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  Expanded(
+                    child: TextField(
+                      decoration: InputDecoration(
+                        hintText: 'Search conversations',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        contentPadding:
+                            const EdgeInsets.symmetric(vertical: 8.0),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _fetchChatList,
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: _lastSnapshot == null
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    itemCount: _lastSnapshot!.docs.length,
+                    itemBuilder: (context, index) {
+                      var chatData = _lastSnapshot!.docs[index].data()
+                          as Map<String, dynamic>;
+                      String chatId = _lastSnapshot!.docs[index].id;
+                      List<String> userIds =
+                          List<String>.from(chatData['userIds'] ?? []);
+
+                      return FutureBuilder<Map<String, String>>(
+                        future: fetchChatPartnerInfo(userIds),
+                        builder: (context, infoSnapshot) {
+                          if (infoSnapshot.hasError) {
+                            return const ListTile(
+                                title: Text("Error loading info"));
+                          }
+                          if (!infoSnapshot.hasData) {
+                            return const ListTile(title: Text("Loading..."));
+                          }
+
+                          String chatName = infoSnapshot.data!["name"]!;
+                          String profileImageUrl =
+                              infoSnapshot.data!["profileImageUrl"]!;
+                          bool isRead = chatData['lastMessageReadBy']
+                                  ?.contains(user!.uid) ??
+                              false;
+                          bool isSelected =
+                              widget.isDesktop && chatId == _selectedChatId;
+
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                                vertical: 8, horizontal: 16),
+                            color: isSelected
+                                ? Colors.deepPurple.withOpacity(0.1)
+                                : null,
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundImage: profileImageUrl.isNotEmpty
+                                    ? NetworkImage(profileImageUrl)
+                                    : null,
+                                backgroundColor: Colors.grey[300],
+                                child: profileImageUrl.isEmpty
+                                    ? Text(
+                                        chatName.isNotEmpty
+                                            ? chatName[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                            color: Colors.white),
+                                      )
+                                    : null,
+                              ),
+                              title: Text(
+                                chatName,
+                                style: TextStyle(
+                                  fontWeight: isRead
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                chatData['lastMessage'] ?? "Tap to open chat",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: Text(
+                                chatData['createdAt'] != null
+                                    ? DateTime.fromMillisecondsSinceEpoch(
+                                            (chatData['createdAt'] as Timestamp)
+                                                .millisecondsSinceEpoch)
+                                        .toLocal()
+                                        .toString()
+                                        .split(' ')[0]
+                                    : '',
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.grey),
+                              ),
+                              onTap: () async {
+                                if (widget.isDesktop &&
+                                    widget.onChatSelected != null) {
+                                  setState(() {
+                                    _selectedChatId = chatId;
+                                  });
+                                  widget.onChatSelected!(chatId, chatName);
+                                } else {
+                                  bool? shouldRefresh = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          ChatScreen(chatId: chatId),
+                                    ),
+                                  );
+                                  if (shouldRefresh == true) {
+                                    _fetchChatList();
+                                  }
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
           ),
         ],
       ),
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: <Widget>[
-            const DrawerHeader(
-              decoration: BoxDecoration(
-                color: Colors.deepPurple,
-              ),
-              child: Text(
-                'Menu',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                ),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.chat),
-              title: const Text('Chats'),
-              onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.person),
-              title: const Text('Profile'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ProfileScreen()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.settings),
-              title: const Text('Settings'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => SettingsScreen()),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-      body: _lastSnapshot == null
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _lastSnapshot!.docs.length,
-              itemBuilder: (context, index) {
-                var chatData = _lastSnapshot!.docs[index].data() as Map<String, dynamic>;
-                String chatId = _lastSnapshot!.docs[index].id;
-                List<String> userIds = List<String>.from(chatData['userIds'] ?? []);
-
-                return FutureBuilder<Map<String, String>>(
-                  future: fetchChatPartnerInfo(userIds),
-                  builder: (context, infoSnapshot) {
-                    if (infoSnapshot.hasError) {
-                      return const ListTile(title: Text("Error loading info"));
-                    }
-                    if (!infoSnapshot.hasData) {
-                      return const ListTile(title: Text("Loading..."));
-                    }
-
-                    String chatName = infoSnapshot.data!["name"]!;
-                    String profileImageUrl = infoSnapshot.data!["profileImageUrl"]!;
-                    bool isRead = chatData['lastMessageReadBy']?.contains(user!.uid) ?? false;
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundImage: profileImageUrl.isNotEmpty
-                              ? NetworkImage(profileImageUrl)
-                              : null,
-                          backgroundColor: Colors.grey[300],
-                          child: profileImageUrl.isEmpty
-                              ? Text(
-                                  chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: Colors.white),
-                                )
-                              : null,
-                        ),
-                        title: Text(
-                          chatName,
-                          style: TextStyle(
-                            fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
-                          ),
-                        ),
-                        subtitle: Text(chatData['lastMessage'] ?? "Tap to open chat"),
-                        trailing: Text(
-                          chatData['createdAt'] != null
-                              ? DateTime.fromMillisecondsSinceEpoch(
-                                      (chatData['createdAt'] as Timestamp)
-                                          .millisecondsSinceEpoch)
-                                  .toLocal()
-                                  .toString()
-                                  .split(' ')[0]
-                              : '',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                        onTap: () async {
-                          bool? shouldRefresh = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ChatScreen(chatId: chatId),
-                            ),
-                          );
-                          if (shouldRefresh == true) {
-                            _fetchChatList();
-                          }
-                        },
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(
