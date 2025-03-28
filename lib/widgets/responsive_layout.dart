@@ -13,6 +13,15 @@ class ResponsiveLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Use MediaQuery to check screen width
+    final width = MediaQuery.of(context).size.width;
+
+    // Show mobile view for screens smaller than 768px, even on web
+    if (width < 768) {
+      return mobileView;
+    }
+
+    // For larger screens, use platform-specific logic
     return PlatformHelper.isDesktop ? desktopView : mobileView;
   }
 

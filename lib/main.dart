@@ -3,13 +3,13 @@ import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/chat/chat_detail_screen.dart';
-import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
 import 'package:flutter_chat_app/widgets/responsive_layout.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -76,22 +76,8 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     // Use responsive layout to determine which view to show
     return ResponsiveLayout(
-      // Mobile view shows just the chat list
-      mobileView: ChatListScreen(
-        isDesktop: false,
-        onChatSelected: (chatId, chatName) {
-          // Navigate to chat detail screen on mobile
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ChatDetailScreen(
-                chatId: chatId,
-                chatName: chatName,
-              ),
-            ),
-          );
-        },
-      ),
+      // Mobile view shows the messenger-style home screen with three sections (Chats, Stories, Menu)
+      mobileView: const MessengerHomeScreen(isDesktop: false),
 
       // Desktop view shows a split screen with chat list and detail
       desktopView: const DesktopChatScreen(),

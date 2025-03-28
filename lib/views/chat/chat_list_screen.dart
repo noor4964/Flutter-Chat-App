@@ -13,16 +13,18 @@ import 'package:flutter_chat_app/services/navigator_observer.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter/gestures.dart'
     show DragStartBehavior, PointerDeviceKind;
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ChatListScreen extends StatefulWidget {
   final bool isDesktop;
   final Function(String chatId, String chatName)? onChatSelected;
+  final bool
+      hideAppBar; // Add this parameter to hide appbar when used within MessengerHomeScreen
 
   const ChatListScreen({
     Key? key,
     this.isDesktop = false,
     this.onChatSelected,
+    this.hideAppBar = false, // Default to showing the AppBar
   }) : super(key: key);
 
   @override
@@ -152,8 +154,9 @@ class _ChatListScreenState extends State<ChatListScreen>
       orElse: () => "Unknown",
     );
 
-    if (otherUserId == "Unknown")
+    if (otherUserId == "Unknown") {
       return {"name": "Unknown", "profileImageUrl": ""};
+    }
 
     try {
       var userDoc = await FirebaseFirestore.instance
@@ -377,192 +380,200 @@ class _ChatListScreenState extends State<ChatListScreen>
         final filteredChats = _getFilteredChats();
 
         return Scaffold(
-          appBar: AppBar(
-            title: Text(
-              widget.isDesktop ? 'Conversations' : 'Chats',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            elevation: 2,
-            actions: [
-              // Menu button to show actions in a popup menu
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                tooltip: 'Menu',
-                onSelected: (value) {
-                  switch (value) {
-                    case 'profile':
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => ProfileScreen()),
-                      );
-                      break;
-                    case 'settings':
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => SettingsScreen()),
-                      );
-                      break;
-                    case 'add_contact':
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => UserListScreen()),
-                      );
-                      break;
-                    case 'requests':
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => PendingRequestsScreen()),
-                      ).then((_) => _fetchChatList());
-                      break;
-                    case 'help':
-                      // Handle help and feedback
-                      break;
-                    case 'signout':
-                      signOutUser();
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
-                  // Profile List Tile
-                  PopupMenuItem<String>(
-                    value: 'profile',
-                    child: ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.person),
-                      ),
-                      title: const Text('Profile'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                    ),
+          appBar: widget.hideAppBar
+              ? null
+              : AppBar(
+                  title: Text(
+                    widget.isDesktop ? 'Conversations' : 'Chats',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-
-                  // Settings List Tile
-                  PopupMenuItem<String>(
-                    value: 'settings',
-                    child: ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(8),
+                  elevation: 2,
+                  actions: [
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Menu',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'profile':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => ProfileScreen()),
+                            );
+                            break;
+                          case 'settings':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => SettingsScreen()),
+                            );
+                            break;
+                          case 'add_contact':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => UserListScreen()),
+                            );
+                            break;
+                          case 'requests':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      PendingRequestsScreen()),
+                            ).then((_) => _fetchChatList());
+                            break;
+                          case 'help':
+                            // Handle help and feedback
+                            break;
+                          case 'signout':
+                            signOutUser();
+                            break;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        // Profile List Tile
+                        PopupMenuItem<String>(
+                          value: 'profile',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.person),
+                            ),
+                            title: const Text('Profile'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                          ),
                         ),
-                        child: const Icon(Icons.settings),
-                      ),
-                      title: const Text('Settings'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
 
-                  // Add Contact List Tile
-                  PopupMenuItem<String>(
-                    value: 'add_contact',
-                    child: ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(8),
+                        // Settings List Tile
+                        PopupMenuItem<String>(
+                          value: 'settings',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.settings),
+                            ),
+                            title: const Text('Settings'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                          ),
                         ),
-                        child: const Icon(Icons.person_add),
-                      ),
-                      title: const Text('Add New Contact'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
 
-                  // Pending Requests List Tile
-                  PopupMenuItem<String>(
-                    value: 'requests',
-                    child: ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(8),
+                        // Add Contact List Tile
+                        PopupMenuItem<String>(
+                          value: 'add_contact',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.person_add),
+                            ),
+                            title: const Text('Add New Contact'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                          ),
                         ),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            const Icon(Icons.notifications),
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(1),
-                                decoration: BoxDecoration(
-                                  color: Colors.red,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 8,
-                                  minHeight: 8,
-                                ),
-                                child: const Text(''),
+
+                        // Pending Requests List Tile
+                        PopupMenuItem<String>(
+                          value: 'requests',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  const Icon(Icons.notifications),
+                                  Positioned(
+                                    right: 0,
+                                    top: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(1),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 8,
+                                        minHeight: 8,
+                                      ),
+                                      child: const Text(''),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      title: const Text('Pending Requests'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-
-                  // Help & Feedback List Tile
-                  PopupMenuItem<String>(
-                    value: 'help',
-                    child: ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.help_outline),
-                      ),
-                      title: const Text('Help & Feedback'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-
-                  // Sign Out List Tile (only shown in non-desktop mode)
-                  if (!widget.isDesktop)
-                    PopupMenuItem<String>(
-                      value: 'signout',
-                      child: ListTile(
-                        leading: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
+                            title: const Text('Pending Requests'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
                           ),
-                          child: const Icon(Icons.logout, color: Colors.red),
                         ),
-                        title: const Text(
-                          'Sign Out',
-                          style: TextStyle(color: Colors.red),
+
+                        // Help & Feedback List Tile
+                        PopupMenuItem<String>(
+                          value: 'help',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.help_outline),
+                            ),
+                            title: const Text('Help & Feedback'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                          ),
                         ),
-                        dense: true,
-                        visualDensity: VisualDensity.compact,
-                      ),
+
+                        // Sign Out List Tile (only shown in non-desktop mode)
+                        if (!widget.isDesktop)
+                          PopupMenuItem<String>(
+                            value: 'signout',
+                            child: ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child:
+                                    const Icon(Icons.logout, color: Colors.red),
+                              ),
+                              title: const Text(
+                                'Sign Out',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
-            ],
-          ),
+                  ],
+                ),
           drawer: !widget.isDesktop
               ? Drawer(
                   child: Column(
