@@ -37,9 +37,7 @@ class _UserListScreenState extends State<UserListScreen> {
       QuerySnapshot userSnapshot = await FirebaseFirestore.instance
           .collection('users')
           .orderBy('username')
-          .startAt([query])
-          .endAt([query + '\uf8ff'])
-          .get();
+          .startAt([query]).endAt([query + '\uf8ff']).get();
 
       setState(() {
         _searchResults = userSnapshot.docs.map((doc) {
@@ -78,54 +76,80 @@ class _UserListScreenState extends State<UserListScreen> {
                       String? userId = searchedUser['uid'];
 
                       if (userId == null) {
-                        return const ListTile(title: Text('User ID is missing'));
+                        return const ListTile(
+                            title: Text('User ID is missing'));
                       }
 
                       return ListTile(
                         title: Text(searchedUser['username']),
                         subtitle: Text(searchedUser['email']),
-                        leading: CircleAvatar(child: Text(searchedUser['username'][0])),
+                        leading: CircleAvatar(
+                            child: Text(searchedUser['username'][0])),
                         trailing: IconButton(
                           icon: const Icon(Icons.person_add),
                           onPressed: () async {
                             await _authService.sendConnectionRequest(userId);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Request sent to ${searchedUser['username']}')),
+                              SnackBar(
+                                  content: Text(
+                                      'Request sent to ${searchedUser['username']}')),
                             );
                           },
                         ),
                         onTap: () async {
                           if (user == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('User not logged in')),
+                              const SnackBar(
+                                  content: Text('User not logged in')),
                             );
                             return;
                           }
 
                           // Check if chat already exists
-                          String? existingChatId =
-                              await _chatService.getExistingChatId(user!.uid, userId);
+                          String? existingChatId = await _chatService
+                              .getExistingChatId(user!.uid, userId);
 
                           if (existingChatId != null) {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => ChatScreen(chatId: existingChatId),
+                                builder: (context) =>
+                                    ChatScreen(chatId: existingChatId),
                               ),
                             );
                           } else {
-                            // Create new chat
-                            String chatId = (await _chatService.createChat(
-                              [user!.uid, userId],
-                              searchedUser['username'],
-                            ))!;
+                            try {
+                              // Create new chat
+                              String? chatId = await _chatService.createChat(
+                                [user!.uid, userId],
+                                searchedUser['username'],
+                              );
 
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => ChatScreen(chatId: chatId),
-                              ),
-                            );
+                              if (chatId != null) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        ChatScreen(chatId: chatId),
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'Failed to create chat. Please try again.'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error creating chat: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
                           }
                         },
                       );

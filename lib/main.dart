@@ -7,25 +7,34 @@ import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
 import 'package:flutter_chat_app/widgets/responsive_layout.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FirebaseConfig.initializeFirebase();
-  runApp(MyApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (context) => ThemeProvider(),
+      child: MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Chat App',
-      theme: ThemeData(
-        primarySwatch: Colors.deepPurple,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
-      home: const AuthenticationWrapper(),
-      navigatorObservers: [MyNavigatorObserver()],
-      debugShowCheckedModeBanner: false,
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          title: 'Flutter Chat App',
+          theme: themeProvider.themeData,
+          home: const AuthenticationWrapper(),
+          navigatorObservers: [MyNavigatorObserver()],
+          debugShowCheckedModeBanner: false,
+        );
+      },
     );
   }
 }
@@ -35,9 +44,28 @@ class AuthenticationWrapper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // You would typically check authentication status here
-    // For now, we'll just show the login screen
-    return const LoginScreen();
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // Handle connection states
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        // Check if user is logged in
+        if (snapshot.hasData && snapshot.data != null) {
+          // User is logged in, show the appropriate screen
+          return const HomeScreen();
+        } else {
+          // User is not logged in, show login screen
+          return const LoginScreen();
+        }
+      },
+    );
   }
 }
 

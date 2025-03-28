@@ -1,19 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
+import 'platform_helper_io.dart'
+    if (dart.library.html) 'platform_helper_web.dart';
+import 'package:flutter_chat_app/services/settings_service.dart';
 
 class PlatformHelper {
-  static bool get isDesktop {
-    return kIsWeb || Platform.isWindows || Platform.isMacOS || Platform.isLinux;
-  }
+  static final SettingsService _settingsService = SettingsService();
 
-  static bool get isMobile {
-    return !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-  }
-
+  // These getters delegate to the platform-specific implementations
+  static bool get isDesktop => kIsWeb || PlatformHelperImpl.isDesktop;
+  static bool get isMobile => !kIsWeb && PlatformHelperImpl.isMobile;
   static bool get isWeb => kIsWeb;
-
-  static bool get isWindows => !kIsWeb && Platform.isWindows;
+  static bool get isWindows => !kIsWeb && PlatformHelperImpl.isWindows;
 
   // Return appropriate padding based on platform
   static EdgeInsets getScreenPadding(BuildContext context) {
@@ -43,13 +41,34 @@ class PlatformHelper {
     }
   }
 
-  // Get appropriate font size multiplier based on platform
-  static double getFontSizeMultiplier() {
-    if (isDesktop) {
-      return 1.2; // Slightly larger font for desktop
-    } else {
-      return 1.0; // Standard font for mobile
+  // Get appropriate font size multiplier based on platform and settings
+  static Future<double> getFontSizeMultiplier() async {
+    double platformMultiplier = isDesktop ? 1.2 : 1.0;
+
+    // Get user's font size preference
+    String fontSizePreference = await _settingsService.getFontSize();
+
+    // Apply font size preference multiplier
+    double settingsMultiplier = 1.0;
+    switch (fontSizePreference) {
+      case 'Small':
+        settingsMultiplier = 0.8;
+        break;
+      case 'Medium':
+        settingsMultiplier = 1.0;
+        break;
+      case 'Large':
+        settingsMultiplier = 1.2;
+        break;
     }
+
+    return platformMultiplier * settingsMultiplier;
+  }
+
+  // Adjust text size based on platform and user settings
+  static Future<double> getAdjustedTextSize(double baseSize) async {
+    double multiplier = await getFontSizeMultiplier();
+    return baseSize * multiplier;
   }
 
   // Check if camera is available on this platform

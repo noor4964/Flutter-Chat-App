@@ -1,39 +1,113 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/services/firebase_config.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseDatabase _database = FirebaseDatabase.instance;
+
+  // Flag to check if we're on Windows with Firebase disabled
+  bool get _isWindowsWithoutFirebase =>
+      PlatformHelper.isWindows && !FirebaseConfig.isFirebaseEnabledOnWindows;
+
+  // Flag to check if we're on web
+  bool get _isWeb => kIsWeb;
 
   // StreamController to manually trigger UI updates
-  final StreamController<bool> chatListController = StreamController<bool>.broadcast();
+  final StreamController<bool> chatListController =
+      StreamController<bool>.broadcast();
+
+  // Get current user stream
+  Stream<User?> get userStream {
+    if (_isWindowsWithoutFirebase) {
+      // Return null stream for Windows - safer than trying to create a mock User
+      return Stream.value(null);
+    }
+
+    return FirebaseAuth.instance.authStateChanges().handleError((error) {
+      print('Error in auth state stream: $error');
+      return null;
+    });
+  }
 
   // Sign in with email and password
-  Future<User?> signInWithEmailAndPassword(String email, String password) async {
-    try {
-      UserCredential result = await _auth.signInWithEmailAndPassword(email: email, password: password);
-      User? user = result.user;
+  Future<User?> signInWithEmailAndPassword(
+      String email, String password) async {
+    if (_isWindowsWithoutFirebase) {
+      // Return mock user for Windows
+      print(
+          '⚠️ Windows detected with Firebase disabled, using mock authentication');
+      await Future.delayed(
+          const Duration(seconds: 1)); // Simulate network delay
+      return FirebaseAuth.instance.currentUser;
+    }
 
-      if (user != null) {
-        _updateUserOnlineStatus(user.uid, true);
+    try {
+      print(
+          '👤 Attempting to sign in with email: $email on platform: ${_isWeb ? "Web" : "Native"}');
+
+      // Force signout before attempting signin to clear any stale state
+      if (_auth.currentUser != null) {
+        print(
+            '⚠️ Found existing logged in user, signing out first to avoid state conflicts');
+        await _auth.signOut();
       }
 
-      print('✅ User signed in: ${result.user?.uid}');
-      return result.user;
+      final credential = await _auth.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password.trim(),
+      );
+
+      print('✅ Sign in successful for user: ${credential.user?.uid}');
+
+      // Update user's online status
+      if (credential.user != null) {
+        try {
+          await _firestore
+              .collection('users')
+              .doc(credential.user!.uid)
+              .update({
+            'isOnline': true,
+            'lastActive': FieldValue.serverTimestamp(),
+          });
+          print('✅ Updated online status for user: ${credential.user!.uid}');
+
+          // Verify the user is still logged in
+          final currentUser = _auth.currentUser;
+          if (currentUser != null) {
+            print(
+                '✅ Verified user is still authenticated after online status update');
+          } else {
+            print(
+                '❌ Error: User authentication state was lost after online status update');
+          }
+        } catch (e) {
+          // If updating online status fails, log but don't prevent login
+          print('⚠️ Warning: Could not update online status: $e');
+        }
+      }
+
+      return credential.user;
     } on FirebaseAuthException catch (e) {
-      print('❌ Sign-in error: ${e.code} - ${e.message}');
-      return null;
+      print('❌ Firebase Auth Error: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Unexpected error during sign in: $e');
+      rethrow;
     }
   }
 
   // Register with email and password
-  Future<User?> registerWithEmailAndPassword(String username, String email, String password, String gender) async {
+  Future<User?> registerWithEmailAndPassword(
+      String username, String email, String password, String gender) async {
     try {
       // 1️⃣ Create user in Firebase Authentication
-      UserCredential result = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+      UserCredential result = await _auth.createUserWithEmailAndPassword(
+          email: email, password: password);
       User? user = result.user;
 
       if (user == null) {
@@ -65,12 +139,19 @@ class AuthService {
     try {
       User? user = _auth.currentUser;
       if (user != null) {
-        _updateUserOnlineStatus(user.uid, false);
+        try {
+          _updateUserOnlineStatus(user.uid, false);
+        } catch (e) {
+          // If updating online status fails, log but don't prevent sign out
+          print(
+              '⚠️ Warning: Could not update online status during sign out: $e');
+        }
       }
       await _auth.signOut();
       print('✅ User signed out successfully');
     } on FirebaseAuthException catch (e) {
       print('❌ Sign-out error: ${e.code} - ${e.message}');
+      throw e; // Rethrow to let UI handle the error
     }
   }
 
@@ -116,7 +197,7 @@ class AuthService {
   // Get chat users
   Future<List<Map<String, dynamic>>> getChatUsers(String currentUserId) async {
     List<String> chatUserIds = await getChatUserIds(currentUserId);
-    
+
     if (chatUserIds.isEmpty) return [];
 
     try {
@@ -125,7 +206,9 @@ class AuthService {
           .where('uid', whereIn: chatUserIds)
           .get();
 
-      return userSnapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
+      return userSnapshot.docs
+          .map((doc) => doc.data() as Map<String, dynamic>)
+          .toList();
     } catch (e) {
       print("❌ Error fetching chat users: $e");
       return [];
@@ -145,7 +228,8 @@ class AuthService {
   }
 
   // Accept connection request and create chat
-  Future<void> acceptConnectionRequest(String requestId, String receiverId) async {
+  Future<void> acceptConnectionRequest(
+      String requestId, String receiverId) async {
     print("Accepting connection request...");
     try {
       await _firestore.collection('connections').doc(requestId).update({
@@ -170,7 +254,6 @@ class AuthService {
 
       // Notify chat list to update
       chatListController.add(true);
-
     } catch (e) {
       print("❌ Error accepting connection request: $e");
     }
@@ -179,7 +262,7 @@ class AuthService {
   // Fetch pending connection requests
   Future<List<Map<String, dynamic>>> getPendingRequests() async {
     String userId = _auth.currentUser!.uid;
-    
+
     QuerySnapshot query = await _firestore
         .collection('connections')
         .where('receiverId', isEqualTo: userId)
@@ -196,12 +279,13 @@ class AuthService {
   // Real-time chat list updates
   Stream<List<Map<String, dynamic>>> getChatList() {
     String currentUserId = _auth.currentUser!.uid;
-    
+
     return _firestore
         .collection('chats')
         .where('userIds', arrayContains: currentUserId)
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList());
+        .map((snapshot) => snapshot.docs
+            .map((doc) => doc.data() as Map<String, dynamic>)
+            .toList());
   }
 }

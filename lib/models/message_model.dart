@@ -7,6 +7,8 @@ class Message {
   final DateTime timestamp;
   final bool isMe;
   final bool isRead;
+  final List<String>? readBy; // Added readBy field
+  final String type;
 
   Message({
     required this.id,
@@ -15,6 +17,8 @@ class Message {
     required this.timestamp,
     required this.isMe,
     required this.isRead,
+    this.readBy, // Added readBy parameter
+    this.type = 'text',
   });
 
   factory Message.fromJson(Map<String, dynamic> json, String currentUserId) {
@@ -27,6 +31,8 @@ class Message {
           : DateTime.now(),
       isMe: json['senderId'] == currentUserId,
       isRead: (json['readBy'] ?? []).contains(currentUserId),
+      readBy: List<String>.from(json['readBy'] ?? []), // Parse readBy field
+      type: json['type'] ?? 'text',
     );
   }
 
@@ -36,7 +42,8 @@ class Message {
       'senderId': sender,
       'content': text,
       'timestamp': timestamp,
-      'readBy': isRead ? [sender] : [],
+      'readBy': readBy ?? [],
+      'type': type,
     };
   }
 }
