@@ -8,9 +8,7 @@ import 'package:flutter_chat_app/views/user_profile_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_chat_app/views/profile/profile_screen.dart';
-import 'package:flutter_chat_app/views/settings/settings_screen.dart';
-import 'package:flutter_chat_app/views/auth/login_screen.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -34,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isTyping = false;
   bool _isSending = false;
   String _replyingTo = '';
+  bool _isEmojiPickerOpen = false; // State variable for emoji picker
 
   // For animations
   late AnimationController _sendButtonAnimationController;
@@ -201,6 +200,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
       _groupedMessages[dateKey]!.add(message);
     }
+
+    // Sort messages within each date group in chronological order (oldest first)
+    _groupedMessages.forEach((dateKey, messageList) {
+      messageList.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    });
   }
 
   String _getDateDisplay(String dateKey) {
@@ -704,8 +708,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                     }
 
                                     return Hero(
-                                      tag:
-                                          'message-${message.id ?? DateTime.now().microsecondsSinceEpoch}',
+                                      tag: 'message-${message.id}',
                                       child: Material(
                                         color: Colors.transparent,
                                         child: ConstrainedBox(
@@ -766,146 +769,257 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ],
                 ),
                 child: SafeArea(
-                  child: Row(
+                  child: Column(
                     children: [
-                      // Attachment button with subtle animation
-                      Material(
-                        color: Colors.transparent,
-                        shape: const CircleBorder(),
-                        clipBehavior: Clip.antiAlias,
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.add_circle_outline,
-                            color: colorScheme.primary,
+                      Row(
+                        children: [
+                          // Attachment button with subtle animation
+                          Material(
+                            color: Colors.transparent,
+                            shape: const CircleBorder(),
+                            clipBehavior: Clip.antiAlias,
+                            child: IconButton(
+                              icon: Icon(
+                                Icons.add_circle_outline,
+                                color: colorScheme.primary,
+                              ),
+                              onPressed: _showAttachmentOptions,
+                              tooltip: 'Attach',
+                              splashColor: colorScheme.primary.withOpacity(0.2),
+                            ),
                           ),
-                          onPressed: _showAttachmentOptions,
-                          tooltip: 'Attach',
-                          splashColor: colorScheme.primary.withOpacity(0.2),
-                        ),
-                      ),
-                      // Expandable text field
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          child: TextField(
-                            controller: _messageController,
-                            decoration: InputDecoration(
-                              hintText: 'Type a message...',
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24.0),
-                                borderSide: BorderSide.none,
-                              ),
-                              filled: true,
-                              fillColor: theme.brightness == Brightness.dark
-                                  ? colorScheme.surface.withOpacity(0.6)
-                                  : colorScheme.surface,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16.0,
-                                vertical: 10.0,
-                              ),
-                              // Make sure the emoji button appears regardless of platform
-                              suffixIcon: Material(
-                                color: Colors.transparent,
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: IconButton(
-                                  icon:
-                                      const Icon(Icons.emoji_emotions_outlined),
-                                  onPressed: () {
-                                    // Emoji picker - future feature
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content:
-                                            Text('Emoji picker coming soon!'),
-                                        duration: Duration(seconds: 2),
+                          // Expandable text field
+                          Expanded(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8.0),
+                              child: TextField(
+                                controller: _messageController,
+                                decoration: InputDecoration(
+                                  hintText: 'Type a message...',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24.0),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  filled: true,
+                                  fillColor: theme.brightness == Brightness.dark
+                                      ? colorScheme.surface.withOpacity(0.6)
+                                      : colorScheme.surface,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16.0,
+                                    vertical: 10.0,
+                                  ),
+                                  // Emoji button
+                                  suffixIcon: Material(
+                                    color: Colors.transparent,
+                                    shape: const CircleBorder(),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: IconButton(
+                                      icon: Icon(
+                                        Icons.emoji_emotions_outlined,
+                                        color: _isEmojiPickerOpen
+                                            ? Colors.amber
+                                            : Colors.grey,
                                       ),
-                                    );
-                                  },
-                                  tooltip: 'Emoji',
-                                  color: Colors.amber,
+                                      onPressed: () {
+                                        setState(() {
+                                          _isEmojiPickerOpen =
+                                              !_isEmojiPickerOpen;
+                                          if (_isEmojiPickerOpen) {
+                                            // If emoji picker is opened, hide keyboard
+                                            FocusScope.of(context).unfocus();
+                                          }
+                                        });
+                                      },
+                                      tooltip: 'Emoji',
+                                    ),
+                                  ),
                                 ),
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                maxLines: 5,
+                                minLines: 1,
+                                keyboardType: TextInputType.multiline,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: theme.brightness == Brightness.dark
+                                      ? Colors.white
+                                      : Colors.black87,
+                                ),
+                                onTap: () {
+                                  // Hide emoji picker when text field is tapped
+                                  if (_isEmojiPickerOpen) {
+                                    setState(() {
+                                      _isEmojiPickerOpen = false;
+                                    });
+                                  }
+
+                                  // Subtle auto-scroll when tapping on input field
+                                  // to ensure user can see recent messages
+                                  if (_scrollController.hasClients) {
+                                    _scrollController.animateTo(
+                                      _scrollController.position.pixels + 50,
+                                      duration:
+                                          const Duration(milliseconds: 200),
+                                      curve: Curves.easeOutCubic,
+                                    );
+                                  }
+                                },
                               ),
                             ),
-                            textCapitalization: TextCapitalization.sentences,
-                            maxLines: 5,
-                            minLines: 1,
-                            keyboardType: TextInputType.multiline,
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: theme.brightness == Brightness.dark
-                                  ? Colors.white
-                                  : Colors.black87,
-                            ),
-                            onTap: () {
-                              // Subtle auto-scroll when tapping on input field
-                              // to ensure user can see recent messages
-                              if (_scrollController.hasClients) {
-                                _scrollController.animateTo(
-                                  _scrollController.position.pixels + 50,
+                          ),
+                          // Send button with animation
+                          AnimatedBuilder(
+                            animation: _sendButtonAnimation,
+                            builder: (context, child) {
+                              return Transform.scale(
+                                scale: _messageController.text.isNotEmpty
+                                    ? 1.0
+                                    : 0.8,
+                                child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 200),
-                                  curve: Curves.easeOutCubic,
-                                );
-                              }
+                                  margin: const EdgeInsets.only(left: 2.0),
+                                  decoration: BoxDecoration(
+                                    color: _messageController.text.isEmpty
+                                        ? colorScheme.primary.withOpacity(0.5)
+                                        : colorScheme.primary,
+                                    shape: BoxShape.circle,
+                                    boxShadow:
+                                        _messageController.text.isNotEmpty
+                                            ? [
+                                                BoxShadow(
+                                                  color: colorScheme.primary
+                                                      .withOpacity(0.4),
+                                                  blurRadius: 8,
+                                                  offset: const Offset(0, 2),
+                                                )
+                                              ]
+                                            : null,
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    shape: const CircleBorder(),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: IconButton(
+                                      icon: _isSending
+                                          ? const SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(Icons.send_rounded,
+                                              color: Colors.white),
+                                      onPressed:
+                                          _messageController.text.isNotEmpty
+                                              ? _sendMessage
+                                              : () {
+                                                  // Subtle indication that user needs to enter text
+                                                  HapticFeedback.lightImpact();
+                                                },
+                                      tooltip: 'Send',
+                                      splashColor: Colors.white24,
+                                    ),
+                                  ),
+                                ),
+                              );
                             },
                           ),
-                        ),
+                        ],
                       ),
-                      // Send button with animation
-                      AnimatedBuilder(
-                        animation: _sendButtonAnimation,
-                        builder: (context, child) {
-                          return Transform.scale(
-                            scale:
-                                _messageController.text.isNotEmpty ? 1.0 : 0.8,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              margin: const EdgeInsets.only(left: 2.0),
-                              decoration: BoxDecoration(
-                                color: _messageController.text.isEmpty
-                                    ? colorScheme.primary.withOpacity(0.5)
-                                    : colorScheme.primary,
-                                shape: BoxShape.circle,
-                                boxShadow: _messageController.text.isNotEmpty
-                                    ? [
-                                        BoxShadow(
-                                          color: colorScheme.primary
-                                              .withOpacity(0.4),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 2),
-                                        )
-                                      ]
-                                    : null,
+
+                      // Emoji picker
+                      if (_isEmojiPickerOpen)
+                        SizedBox(
+                          height: 250,
+                          child: EmojiPicker(
+                            onEmojiSelected: (category, emoji) {
+                              // Fix the double emoji issue by preventing duplicate insertions
+                              // Only update the text field once with the selected emoji
+                              final text = _messageController.text;
+                              final selection = _messageController.selection;
+                              final newText = text.replaceRange(
+                                selection.start,
+                                selection.end,
+                                emoji.emoji,
+                              );
+                              _messageController.text = newText;
+                              _messageController.selection =
+                                  TextSelection.collapsed(
+                                offset: selection.start + emoji.emoji.length,
+                              );
+                            },
+                            onBackspacePressed: () {
+                              if (_messageController.text.isNotEmpty) {
+                                final text = _messageController.text;
+                                final selection = _messageController.selection;
+                                if (selection.start > 0) {
+                                  final newText = text.replaceRange(
+                                    selection.start - 1,
+                                    selection.end,
+                                    '',
+                                  );
+                                  _messageController.text = newText;
+                                  _messageController.selection =
+                                      TextSelection.collapsed(
+                                    offset: selection.start - 1,
+                                  );
+                                }
+                              }
+                            },
+                            textEditingController: _messageController,
+                            config: Config(
+                              height: 256,
+                              checkPlatformCompatibility: true,
+                              emojiViewConfig: EmojiViewConfig(
+                                columns: 8,
+                                emojiSizeMax: 32.0,
+                                backgroundColor:
+                                    theme.brightness == Brightness.dark
+                                        ? colorScheme.surface
+                                        : Colors.white,
+                                gridPadding: const EdgeInsets.all(2),
+                                buttonMode: ButtonMode.MATERIAL,
                               ),
-                              child: Material(
-                                color: Colors.transparent,
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: IconButton(
-                                  icon: _isSending
-                                      ? const SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Icon(Icons.send_rounded,
-                                          color: Colors.white),
-                                  onPressed: _messageController.text.isNotEmpty
-                                      ? _sendMessage
-                                      : () {
-                                          // Subtle indication that user needs to enter text
-                                          HapticFeedback.lightImpact();
-                                        },
-                                  tooltip: 'Send',
-                                  splashColor: Colors.white24,
+                              categoryViewConfig: CategoryViewConfig(
+                                backgroundColor:
+                                    theme.brightness == Brightness.dark
+                                        ? colorScheme.surfaceVariant
+                                        : Colors.white,
+                                iconColorSelected: colorScheme.primary,
+                                iconColor: Colors.grey,
+                                tabIndicatorAnimDuration: kTabScrollDuration,
+                                recentTabBehavior: RecentTabBehavior.RECENT,
+                                initCategory: Category.RECENT,
+                                categoryIcons: const CategoryIcons(
+                                  recentIcon: Icons.access_time_rounded,
+                                  smileyIcon: Icons.emoji_emotions_outlined,
+                                  animalIcon: Icons.pets_outlined,
+                                  foodIcon: Icons.fastfood_outlined,
+                                  travelIcon: Icons.location_on_outlined,
+                                  activityIcon: Icons.sports_soccer_outlined,
+                                  objectIcon: Icons.lightbulb_outline,
+                                  symbolIcon: Icons.emoji_symbols_outlined,
+                                  flagIcon: Icons.flag_outlined,
                                 ),
                               ),
+                              skinToneConfig: SkinToneConfig(
+                                enabled: true,
+                                dialogBackgroundColor: Colors.white,
+                              ),
+                              bottomActionBarConfig: BottomActionBarConfig(
+                                backgroundColor:
+                                    theme.brightness == Brightness.dark
+                                        ? colorScheme.surfaceVariant
+                                        : Colors.white,
+                                buttonColor: colorScheme.primary,
+                                buttonIconColor: Colors.white,
+                              ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -980,8 +1094,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _showAttachmentOptions() {
-    final theme = Theme.of(context);
-
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(

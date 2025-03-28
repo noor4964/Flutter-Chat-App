@@ -3,11 +3,20 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ...existing rules...
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
 
     // ✅ Chats Collection (Only members can access)
     match /chats/{chatId} {
       allow read, write, delete: if isAuthenticated() && request.auth.uid in resource.data.userIds;
+      
+      // Allow access to typing status subcollection
+      match /typing/{docId} {
+        allow read, write: if isAuthenticated() && 
+          (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds);
+      }
     }
 
     // ...existing rules...
