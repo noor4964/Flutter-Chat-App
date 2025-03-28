@@ -251,14 +251,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final isTabletOrDesktop = MediaQuery.of(context).size.width > 600;
 
     return Scaffold(
       appBar: AppBar(
+        elevation: 0,
+        scrolledUnderElevation: 2.0,
+        backgroundColor: theme.brightness == Brightness.dark
+            ? colorScheme.surface
+            : colorScheme.primary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
+          color: theme.brightness == Brightness.dark ? null : Colors.white,
           onPressed: () {
-            Navigator.pop(
-                context, true); // ✅ Pass `true` to notify ChatListScreen
+            Navigator.pop(context, true);
           },
         ),
         titleSpacing: 0,
@@ -266,33 +272,46 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           onTap: _showChatPersonDetails,
           child: Row(
             children: [
-              Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundImage: _chatPersonAvatarUrl != null
-                        ? NetworkImage(_chatPersonAvatarUrl!)
-                        : null,
-                    backgroundColor: colorScheme.primary.withOpacity(0.2),
-                    child: _chatPersonAvatarUrl == null
-                        ? Icon(Icons.person, color: colorScheme.primary)
-                        : null,
-                  ),
-                  if (_chatPersonIsOnline)
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
+              Hero(
+                tag: 'profile-${widget.chatId}',
+                child: Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundImage: _chatPersonAvatarUrl != null
+                          ? NetworkImage(_chatPersonAvatarUrl!)
+                          : null,
+                      backgroundColor: theme.brightness == Brightness.dark
+                          ? colorScheme.primary.withOpacity(0.2)
+                          : Colors.white.withOpacity(0.9),
+                      child: _chatPersonAvatarUrl == null
+                          ? Icon(Icons.person,
+                              color: theme.brightness == Brightness.dark
+                                  ? colorScheme.primary
+                                  : colorScheme.primary)
+                          : null,
+                    ),
+                    if (_chatPersonIsOnline)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: theme.brightness == Brightness.dark
+                                  ? colorScheme.surface
+                                  : colorScheme.primary,
+                              width: 2,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -301,29 +320,37 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   children: [
                     Text(
                       _chatPersonName ?? 'Loading...',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                         overflow: TextOverflow.ellipsis,
+                        color: theme.brightness == Brightness.dark
+                            ? null
+                            : Colors.white,
                       ),
                     ),
                     AnimatedSize(
                       duration: const Duration(milliseconds: 300),
                       child: _isTyping
-                          ? const Text(
+                          ? Text(
                               'Typing...',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.green,
+                                color: theme.brightness == Brightness.dark
+                                    ? Colors.green
+                                    : Colors.white.withOpacity(0.9),
                               ),
                             )
                           : Text(
                               _chatPersonIsOnline ? 'Online' : 'Offline',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: _chatPersonIsOnline
-                                    ? Colors.green
-                                    : Colors.grey,
+                                color: theme.brightness == Brightness.dark
+                                    ? _chatPersonIsOnline
+                                        ? Colors.green
+                                        : Colors.grey
+                                    : Colors.white.withOpacity(
+                                        _chatPersonIsOnline ? 0.9 : 0.7),
                               ),
                             ),
                     ),
@@ -336,6 +363,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         actions: [
           IconButton(
             icon: const Icon(Icons.call),
+            color: theme.brightness == Brightness.dark ? null : Colors.white,
             tooltip: 'Voice Call',
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -348,6 +376,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
           IconButton(
             icon: const Icon(Icons.videocam),
+            color: theme.brightness == Brightness.dark ? null : Colors.white,
             tooltip: 'Video Call',
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -359,7 +388,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             },
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
+            icon: Icon(
+              Icons.more_vert,
+              color: theme.brightness == Brightness.dark ? null : Colors.white,
+            ),
             tooltip: 'More options',
             onSelected: (value) {
               switch (value) {
@@ -437,15 +469,27 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             children: <Widget>[
               // Reply preview if user is replying to a message
               if (_replyingTo.isNotEmpty)
-                Container(
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
                   padding: const EdgeInsets.all(8.0),
-                  color: colorScheme.surface,
+                  decoration: BoxDecoration(
+                    color: theme.brightness == Brightness.dark
+                        ? colorScheme.surfaceVariant
+                        : colorScheme.primary.withOpacity(0.1),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                  ),
                   child: Row(
                     children: [
                       Container(
                         width: 4,
                         height: 40,
-                        color: colorScheme.primary,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                         margin: const EdgeInsets.only(right: 8.0),
                       ),
                       Expanded(
@@ -471,10 +515,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _cancelReply,
+                        icon: const Icon(Icons.close, size: 18),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
+                        onPressed: _cancelReply,
                       ),
                     ],
                   ),
@@ -488,14 +532,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     image: kIsWeb
                         ? null // No background image on web for better performance
                         : DecorationImage(
-                            image: AssetImage(theme.brightness ==
-                                    Brightness.dark
-                                ? 'assets/images/chat_bg_dark.png' // Need to create these assets
-                                : 'assets/images/chat_bg_light.png'),
+                            image: AssetImage(
+                                theme.brightness == Brightness.dark
+                                    ? 'assets/images/chat_bg_dark.png'
+                                    : 'assets/images/chat_bg_light.png'),
                             opacity: 0.1,
                             repeat: ImageRepeat.repeat,
                           ),
                   ),
+                  // This padding makes the chat content more centered on larger screens
+                  padding: isTabletOrDesktop
+                      ? EdgeInsets.symmetric(
+                          horizontal: MediaQuery.of(context).size.width * 0.1)
+                      : EdgeInsets.zero,
                   child: FutureBuilder<void>(
                     future: _cacheUsernames(),
                     builder: (context, snapshot) {
@@ -570,6 +619,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               final messagesForDate =
                                   _groupedMessages[dateKey]!;
 
+                              // Calculate max width for bubbles depending on screen size
+                              final screenWidth =
+                                  MediaQuery.of(context).size.width;
+                              final maxBubbleWidth = isTabletOrDesktop
+                                  ? screenWidth * 0.6 // 60% on larger screens
+                                  : screenWidth * 0.75; // 75% on mobile
+
                               return Column(
                                 children: [
                                   // Date header
@@ -587,11 +643,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                               .withOpacity(0.7),
                                           borderRadius:
                                               BorderRadius.circular(16),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              blurRadius: 4,
+                                              color:
+                                                  Colors.black.withOpacity(0.1),
+                                              offset: const Offset(0, 1),
+                                            ),
+                                          ],
                                         ),
                                         child: Text(
                                           _getDateDisplay(dateKey),
                                           style: TextStyle(
                                             fontSize: 12,
+                                            fontWeight: FontWeight.w500,
                                             color: colorScheme.onSurfaceVariant,
                                           ),
                                         ),
@@ -599,7 +664,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                     ),
                                   ),
 
-                                  // Messages for this date
+                                  // Messages for this date - organized by sender
                                   ...messagesForDate.map((message) {
                                     String senderName =
                                         _usernamesCache[message.sender] ??
@@ -638,20 +703,38 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                       isLastInGroup = timeDiff > 2;
                                     }
 
-                                    return GestureDetector(
-                                      onLongPress: () {
-                                        // Show message options
-                                        HapticFeedback.mediumImpact();
-                                        _showMessageOptions(message);
-                                      },
-                                      child: MessageBubble(
-                                        sender: senderName,
-                                        text: message.text,
-                                        timestamp: message.timestamp,
-                                        isMe: message.isMe,
-                                        isRead: message.isRead,
-                                        isFirstInGroup: isFirstInGroup,
-                                        isLastInGroup: isLastInGroup,
+                                    return Hero(
+                                      tag:
+                                          'message-${message.id ?? DateTime.now().microsecondsSinceEpoch}',
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            maxWidth: maxBubbleWidth,
+                                          ),
+                                          child: GestureDetector(
+                                            onLongPress: () {
+                                              // Show message options with haptic feedback
+                                              HapticFeedback.mediumImpact();
+                                              _showMessageOptions(message);
+                                            },
+                                            child: AnimatedContainer(
+                                              duration: const Duration(
+                                                  milliseconds: 200),
+                                              margin: const EdgeInsets.only(
+                                                  bottom: 4),
+                                              child: MessageBubble(
+                                                sender: senderName,
+                                                text: message.text,
+                                                timestamp: message.timestamp,
+                                                isMe: message.isMe,
+                                                isRead: message.isRead,
+                                                isFirstInGroup: isFirstInGroup,
+                                                isLastInGroup: isLastInGroup,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     );
                                   }).toList(),
@@ -669,9 +752,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               // Message input field
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
                 decoration: BoxDecoration(
-                  color: theme.scaffoldBackgroundColor,
+                  color: theme.brightness == Brightness.dark
+                      ? colorScheme.surfaceVariant.withOpacity(0.5)
+                      : theme.scaffoldBackgroundColor,
                   boxShadow: [
                     BoxShadow(
                       offset: const Offset(0, -1),
@@ -680,64 +765,149 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     ),
                   ],
                 ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.add),
-                      onPressed: _showAttachmentOptions,
-                      tooltip: 'Attach',
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: 'Type a message...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24.0),
-                            borderSide: BorderSide.none,
+                child: SafeArea(
+                  child: Row(
+                    children: [
+                      // Attachment button with subtle animation
+                      Material(
+                        color: Colors.transparent,
+                        shape: const CircleBorder(),
+                        clipBehavior: Clip.antiAlias,
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.add_circle_outline,
+                            color: colorScheme.primary,
                           ),
-                          filled: true,
-                          fillColor: colorScheme.surface,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16.0,
-                            vertical: 8.0,
+                          onPressed: _showAttachmentOptions,
+                          tooltip: 'Attach',
+                          splashColor: colorScheme.primary.withOpacity(0.2),
+                        ),
+                      ),
+                      // Expandable text field
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          child: TextField(
+                            controller: _messageController,
+                            decoration: InputDecoration(
+                              hintText: 'Type a message...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24.0),
+                                borderSide: BorderSide.none,
+                              ),
+                              filled: true,
+                              fillColor: theme.brightness == Brightness.dark
+                                  ? colorScheme.surface.withOpacity(0.6)
+                                  : colorScheme.surface,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16.0,
+                                vertical: 10.0,
+                              ),
+                              // Make sure the emoji button appears regardless of platform
+                              suffixIcon: Material(
+                                color: Colors.transparent,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  icon:
+                                      const Icon(Icons.emoji_emotions_outlined),
+                                  onPressed: () {
+                                    // Emoji picker - future feature
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content:
+                                            Text('Emoji picker coming soon!'),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
+                                  tooltip: 'Emoji',
+                                  color: Colors.amber,
+                                ),
+                              ),
+                            ),
+                            textCapitalization: TextCapitalization.sentences,
+                            maxLines: 5,
+                            minLines: 1,
+                            keyboardType: TextInputType.multiline,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: theme.brightness == Brightness.dark
+                                  ? Colors.white
+                                  : Colors.black87,
+                            ),
+                            onTap: () {
+                              // Subtle auto-scroll when tapping on input field
+                              // to ensure user can see recent messages
+                              if (_scrollController.hasClients) {
+                                _scrollController.animateTo(
+                                  _scrollController.position.pixels + 50,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOutCubic,
+                                );
+                              }
+                            },
                           ),
                         ),
-                        textCapitalization: TextCapitalization.sentences,
-                        maxLines: null,
-                        keyboardType: TextInputType.multiline,
                       ),
-                    ),
-                    AnimatedBuilder(
-                      animation: _sendButtonAnimation,
-                      builder: (context, child) {
-                        return ScaleTransition(
-                          scale: _sendButtonAnimation,
-                          child: Container(
-                            margin: const EdgeInsets.only(left: 4.0),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primary,
-                              shape: BoxShape.circle,
+                      // Send button with animation
+                      AnimatedBuilder(
+                        animation: _sendButtonAnimation,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale:
+                                _messageController.text.isNotEmpty ? 1.0 : 0.8,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              margin: const EdgeInsets.only(left: 2.0),
+                              decoration: BoxDecoration(
+                                color: _messageController.text.isEmpty
+                                    ? colorScheme.primary.withOpacity(0.5)
+                                    : colorScheme.primary,
+                                shape: BoxShape.circle,
+                                boxShadow: _messageController.text.isNotEmpty
+                                    ? [
+                                        BoxShadow(
+                                          color: colorScheme.primary
+                                              .withOpacity(0.4),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        )
+                                      ]
+                                    : null,
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  icon: _isSending
+                                      ? const SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.send_rounded,
+                                          color: Colors.white),
+                                  onPressed: _messageController.text.isNotEmpty
+                                      ? _sendMessage
+                                      : () {
+                                          // Subtle indication that user needs to enter text
+                                          HapticFeedback.lightImpact();
+                                        },
+                                  tooltip: 'Send',
+                                  splashColor: Colors.white24,
+                                ),
+                              ),
                             ),
-                            child: IconButton(
-                              icon: _isSending
-                                  ? const SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.send, color: Colors.white),
-                              onPressed: _isSending ? null : _sendMessage,
-                              tooltip: 'Send',
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
