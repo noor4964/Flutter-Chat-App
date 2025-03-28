@@ -5,6 +5,9 @@ import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
+import 'package:flutter_chat_app/views/news_feed_screen.dart';
+import 'package:flutter_chat_app/services/firebase_error_handler.dart';
+import 'package:flutter_chat_app/widgets/error_boundary.dart';
 
 class MessengerHomeScreen extends StatefulWidget {
   final bool isDesktop;
@@ -21,58 +24,93 @@ class MessengerHomeScreen extends StatefulWidget {
 class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   int _currentIndex = 0;
   final PageController _pageController = PageController();
+  final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
+  bool _isMounted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _isMounted = true;
+  }
 
   @override
   void dispose() {
+    _isMounted = false;
     _pageController.dispose();
     super.dispose();
+  }
+
+  // Safe setState that checks if widget is mounted before updating state
+  void _safeSetState(Function() function) {
+    if (_isMounted && mounted) {
+      setState(function);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final width = MediaQuery.of(context).size.width;
 
     return Scaffold(
       body: PageView(
         controller: _pageController,
+        physics:
+            const NeverScrollableScrollPhysics(), // Prevent swiping to avoid partial loading issues
         onPageChanged: (index) {
-          setState(() {
+          _safeSetState(() {
             _currentIndex = index;
           });
         },
         children: [
-          // Chats Screen
-          _buildChatsSection(),
+          // Chats Screen - Wrapped in error boundary
+          _buildErrorSafeScreen(_buildChatsSection()),
+
+          // News Feed Screen
+          _buildErrorSafeScreen(NewsFeedScreen()),
 
           // Stories Screen
-          _buildStoriesSection(),
+          _buildErrorSafeScreen(_buildStoriesSection()),
 
           // Menu Screen
-          _buildMenuSection(),
+          _buildErrorSafeScreen(_buildMenuSection()),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-            _pageController.animateToPage(
-              index,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          });
+          // Handle tab switch in a try-catch block
+          try {
+            _safeSetState(() {
+              _currentIndex = index;
+              _pageController.jumpToPage(
+                  index); // Use jumpToPage instead of animate for more stability
+            });
+          } catch (e) {
+            print('❌ Error switching tabs: $e');
+            // Show a simple toast instead of a dialog that might block the UI
+            if (_isMounted && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Error switching tabs. Please try again.')),
+              );
+            }
+          }
         },
         backgroundColor: theme.scaffoldBackgroundColor,
         selectedItemColor: colorScheme.primary,
         unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.chat_bubble_outline),
             activeIcon: Icon(Icons.chat_bubble),
             label: 'Chats',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.view_list),
+            activeIcon: Icon(Icons.view_list),
+            label: 'Feed',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.auto_stories_outlined),
@@ -86,19 +124,42 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: _currentIndex == 0 && width >= 768
+      floatingActionButton: _shouldShowFab()
           ? FloatingActionButton(
               onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => UserListScreen()),
-                );
+                try {
+                  if (_currentIndex == 0) {
+                    // Start new chat
+                    _safeNavigate(context, UserListScreen());
+                  } else if (_currentIndex == 1) {
+                    // Create new post
+                    // This will be handled by the NewsFeedScreen's own FAB
+                  }
+                } catch (e) {
+                  print('❌ Error in FAB action: $e');
+                  if (_isMounted && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                          content: Text('Action failed: Please try again')),
+                    );
+                  }
+                }
               },
-              child: const Icon(Icons.create),
-              tooltip: 'Start a new conversation',
+              child: Icon(_currentIndex == 0
+                  ? Icons.create
+                  : Icons.add_photo_alternate),
+              tooltip: _currentIndex == 0
+                  ? 'Start a new conversation'
+                  : 'Create post',
             )
           : null,
     );
+  }
+
+  bool _shouldShowFab() {
+    // Only show FAB on Chats tab on desktop/tablet
+    // Feed tab has its own FAB
+    return (_currentIndex == 0 && MediaQuery.of(context).size.width >= 768);
   }
 
   // Chats Section - Show existing chat list
@@ -431,21 +492,36 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               icon: Icons.person_add,
               title: 'New Contact',
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => UserListScreen()),
-                );
+                try {
+                  _safeNavigate(context, UserListScreen());
+                } catch (e) {
+                  print('❌ Error navigating to UserListScreen: $e');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text(
+                              'Could not open contacts. Please try again.')),
+                    );
+                  }
+                }
               },
             ),
             _buildMenuItem(
               icon: Icons.notifications,
               title: 'Pending Requests',
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => PendingRequestsScreen()),
-                );
+                try {
+                  _safeNavigate(context, PendingRequestsScreen());
+                } catch (e) {
+                  print('❌ Error navigating to PendingRequestsScreen: $e');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text(
+                              'Could not open requests. Please try again.')),
+                    );
+                  }
+                }
               },
               badge: '3', // Example badge number - would be dynamic in real app
             ),
@@ -484,37 +560,57 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               title: 'Sign Out',
               onTap: () async {
                 // Logout confirmation dialog
-                bool confirm = await showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('Sign Out'),
-                        content:
-                            const Text('Are you sure you want to sign out?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: const Text('Cancel'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                            ),
-                            child: const Text('Sign Out'),
-                          ),
-                        ],
-                      ),
-                    ) ??
-                    false;
-
-                if (!confirm) return;
-
                 try {
-                  await FirebaseAuth.instance.signOut();
-                } catch (e) {
-                  if (mounted) {
+                  bool confirm = await showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Sign Out'),
+                          content:
+                              const Text('Are you sure you want to sign out?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                              ),
+                              child: const Text('Sign Out'),
+                            ),
+                          ],
+                        ),
+                      ) ??
+                      false;
+
+                  if (!confirm) return;
+
+                  try {
+                    await FirebaseAuth.instance.signOut();
+                  } catch (e) {
+                    print('❌ Error during sign out: $e');
+
+                    // Let the error handler deal with Firebase errors
+                    await _errorHandler.handleFirebaseException(e, context);
+
+                    if (_isMounted && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                            content:
+                                Text('Could not sign out. Please try again.')),
+                      );
+                    }
+                  }
+                } catch (dialogError) {
+                  // Handle any errors that might occur with the dialog
+                  print('❌ Error showing sign out dialog: $dialogError');
+
+                  if (_isMounted && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Sign out error: $e')),
+                      const SnackBar(
+                          content:
+                              Text('An error occurred. Please try again.')),
                     );
                   }
                 }
@@ -624,23 +720,55 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     );
   }
 
-  // Helper method to get user profile image
+  // Helper method to get user profile image with error handling
   ImageProvider? _getUserProfileImage() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user?.photoURL != null) {
-      return NetworkImage(user!.photoURL!);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user?.photoURL != null) {
+        return NetworkImage(user!.photoURL!);
+      }
+    } catch (e) {
+      print('❌ Error getting user profile image: $e');
+      // Return null instead of crashing
     }
     return null;
   }
 
-  // Helper method to get user initials
+  // Helper method to get user initials with error handling
   String _getUserInitials() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user?.displayName != null && user!.displayName!.isNotEmpty) {
-      return user.displayName![0].toUpperCase();
-    } else if (user?.email != null && user!.email!.isNotEmpty) {
-      return user.email![0].toUpperCase();
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user?.displayName != null && user!.displayName!.isNotEmpty) {
+        return user.displayName![0].toUpperCase();
+      } else if (user?.email != null && user!.email!.isNotEmpty) {
+        return user.email![0].toUpperCase();
+      }
+    } catch (e) {
+      print('❌ Error getting user initials: $e');
+      // Return a fallback value instead of crashing
     }
     return '?';
+  }
+
+  // Safely navigate to a new page with error handling
+  Future<void> _safeNavigate(BuildContext context, Widget destination) async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => destination),
+      );
+    } catch (e) {
+      print('❌ Navigation error: $e');
+      if (_isMounted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Navigation error: Please try again')),
+        );
+      }
+    }
+  }
+
+  // Build a proper error boundary widget
+  Widget _buildErrorSafeScreen(Widget screen) {
+    return ErrorBoundary(child: screen);
   }
 }

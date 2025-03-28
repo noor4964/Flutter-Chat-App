@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
+import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/chat/chat_detail_screen.dart';
@@ -13,7 +15,24 @@ import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await FirebaseConfig.initializeFirebase();
+
+  // Initialize Firebase with error handling
+  try {
+    await FirebaseConfig.initializeFirebase();
+
+    // Verify Firestore connection by making a simple query
+    print('🔍 Verifying Firestore connection...');
+    await FirebaseConfig
+        .clearFirestoreCache(); // Clear cache to prevent assertion errors
+
+    // Create error handler immediately
+    final errorHandler = FirebaseErrorHandler();
+    errorHandler.suppressDialogs(true); // Prevent dialogs during startup
+  } catch (e) {
+    print('❌ Error during app initialization: $e');
+    // We'll handle this in the app UI since we can't show dialogs here
+  }
+
   runApp(
     ChangeNotifierProvider(
       create: (context) => ThemeProvider(),
@@ -23,27 +42,114 @@ void main() async {
 }
 
 class MyApp extends StatelessWidget {
+  final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
+
   @override
   Widget build(BuildContext context) {
-    return Consumer<ThemeProvider>(
-      builder: (context, themeProvider, child) {
-        return MaterialApp(
-          title: 'Flutter Chat App',
-          theme: themeProvider.themeData,
-          home: const AuthenticationWrapper(),
-          navigatorObservers: [MyNavigatorObserver()],
-          debugShowCheckedModeBanner: false,
-        );
-      },
-    );
+    return Consumer<ThemeProvider>(builder: (context, themeProvider, child) {
+      return MaterialApp(
+        title: 'Flutter Chat App',
+        theme: themeProvider.themeData,
+        home: const AuthenticationWrapper(),
+        navigatorObservers: [MyNavigatorObserver()],
+        debugShowCheckedModeBanner: false,
+        builder: (context, child) {
+          // Enable error dialogs after app is built
+          _errorHandler.suppressDialogs(false);
+
+          // Return the child with error handling
+          return child ?? const SizedBox.shrink();
+        },
+      );
+    });
   }
 }
 
-class AuthenticationWrapper extends StatelessWidget {
+class AuthenticationWrapper extends StatefulWidget {
   const AuthenticationWrapper({Key? key}) : super(key: key);
 
   @override
+  State<AuthenticationWrapper> createState() => _AuthenticationWrapperState();
+}
+
+class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
+  bool _isInitializing = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFirebaseStatus();
+  }
+
+  Future<void> _checkFirebaseStatus() async {
+    try {
+      // Verify Firebase is properly initialized
+      if (!FirebaseConfig.isInitialized) {
+        await FirebaseConfig.restartFirebase();
+      }
+
+      setState(() {
+        _isInitializing = false;
+        _errorMessage = null;
+      });
+    } catch (e) {
+      setState(() {
+        _isInitializing = false;
+        _errorMessage =
+            "Could not connect to the database. Please check your internet connection.";
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Show loading or error state if initializing
+    if (_isInitializing) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Connecting to database...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Show error message if there was a problem
+    if (_errorMessage != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () async {
+                  setState(() {
+                    _isInitializing = true;
+                  });
+                  await _checkFirebaseStatus();
+                },
+                child: const Text('Retry Connection'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
@@ -69,8 +175,30 @@ class AuthenticationWrapper extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _initializeCollections();
+  }
+
+  Future<void> _initializeCollections() async {
+    try {
+      // Initialize the posts collection if needed
+      final feedService = FeedService();
+      await feedService.initializePostsCollection(context: context);
+    } catch (e) {
+      print('❌ Error initializing collections: $e');
+      // Error is handled within the services
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
