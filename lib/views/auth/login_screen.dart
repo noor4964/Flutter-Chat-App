@@ -1,11 +1,12 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/views/forgot_password_screen.dart';
 import 'package:flutter_chat_app/widgets/custom_text_field.dart';
 import 'package:flutter_chat_app/widgets/animations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'register_screen.dart';
 
@@ -236,7 +237,13 @@ class _LoginScreenState extends State<LoginScreen>
                               alignment: Alignment.centerRight,
                               child: TextButton(
                                 onPressed: () {
-                                  // TODO: Implement forgot password functionality
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const ForgotPasswordScreen(),
+                                    ),
+                                  );
                                 },
                                 child: Text(
                                   'Forgot Password?',
@@ -376,11 +383,14 @@ class _LoginScreenState extends State<LoginScreen>
       try {
         print('📝 Login attempt with email: ${_emailController.text.trim()}');
 
-        User? user = await AuthService().signInWithEmailAndPassword(
+        // Use AuthProvider instead of AuthService directly
+        final authProvider =
+            Provider.of<app_provider.AuthProvider>(context, listen: false);
+        final success = await authProvider.signIn(
             _emailController.text.trim(), _passwordController.text.trim());
 
-        if (user != null) {
-          print('✅ Login successful for user: ${user.uid}');
+        if (success) {
+          print('✅ Login successful');
 
           // Use Navigator.pop instead of pushReplacement to return to the AuthenticationWrapper
           // which will detect the auth state change and show the ChatListScreen
@@ -404,12 +414,13 @@ class _LoginScreenState extends State<LoginScreen>
             }
           }
         } else {
-          print('❌ Login returned null user');
+          print('❌ Login returned failure');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content:
-                      Text('Login failed - please check your credentials')),
+              SnackBar(
+                content: Text(authProvider.errorMessage ??
+                    'Login failed - please check your credentials'),
+              ),
             );
           }
         }

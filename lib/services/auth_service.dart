@@ -288,4 +288,52 @@ class AuthService {
             .map((doc) => doc.data() as Map<String, dynamic>)
             .toList());
   }
+
+  // Send password reset email
+  Future<void> sendPasswordResetEmail(String email) async {
+    if (_isWindowsWithoutFirebase) {
+      print(
+          '⚠️ Windows detected with Firebase disabled, simulating password reset');
+      await Future.delayed(
+          const Duration(seconds: 1)); // Simulate network delay
+      return;
+    }
+
+    try {
+      print('📧 Attempting to send password reset email to: $email');
+      await _auth.sendPasswordResetEmail(email: email.trim());
+      print('✅ Password reset email sent successfully to: $email');
+    } on FirebaseAuthException catch (e) {
+      print(
+          '❌ Firebase Auth Error when sending password reset: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Unexpected error during password reset: $e');
+      rethrow;
+    }
+  }
+
+  // Verify password reset code and set new password
+  Future<void> confirmPasswordReset(String code, String newPassword) async {
+    if (_isWindowsWithoutFirebase) {
+      print(
+          '⚠️ Windows detected with Firebase disabled, simulating password reset confirmation');
+      await Future.delayed(
+          const Duration(seconds: 1)); // Simulate network delay
+      return;
+    }
+
+    try {
+      print('🔑 Attempting to confirm password reset with code');
+      await _auth.confirmPasswordReset(code: code, newPassword: newPassword);
+      print('✅ Password reset confirmed successfully');
+    } on FirebaseAuthException catch (e) {
+      print(
+          '❌ Firebase Auth Error when confirming password reset: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Unexpected error during password reset confirmation: $e');
+      rethrow;
+    }
+  }
 }

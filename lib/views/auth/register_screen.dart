@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_chat_app/services/auth_service.dart';
+import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/widgets/custom_text_field.dart';
-import 'package:flutter_chat_app/widgets/custom_button.dart';
 import 'package:flutter_chat_app/widgets/animations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
@@ -50,10 +49,8 @@ class _RegisterScreenState extends State<RegisterScreen>
       duration: const Duration(seconds: 20),
     );
 
-    _backgroundAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(_backgroundAnimationController);
+    _backgroundAnimation = Tween<double>(begin: 0.0, end: 1.0)
+        .animate(_backgroundAnimationController);
 
     // Loop the animation
     _backgroundAnimationController.repeat(reverse: true);
@@ -328,16 +325,21 @@ class _RegisterScreenState extends State<RegisterScreen>
                                           });
 
                                           try {
-                                            User? user = await AuthService()
-                                                .registerWithEmailAndPassword(
+                                            // Use AuthProvider instead of AuthService directly
+                                            final authProvider = Provider.of<
+                                                    app_provider.AuthProvider>(
+                                                context,
+                                                listen: false);
+                                            final success =
+                                                await authProvider.register(
                                                     username,
                                                     email,
                                                     password,
                                                     gender);
 
-                                            if (user != null && mounted) {
+                                            if (success && mounted) {
                                               print(
-                                                  'User registered successfully: ${user.uid}');
+                                                  'User registered successfully');
                                               Navigator.pushReplacement(
                                                 context,
                                                 MaterialPageRoute(
@@ -347,45 +349,11 @@ class _RegisterScreenState extends State<RegisterScreen>
                                             } else if (mounted) {
                                               ScaffoldMessenger.of(context)
                                                   .showSnackBar(
-                                                const SnackBar(
-                                                    content: Text(
-                                                        'Registration failed: User is null')),
+                                                SnackBar(
+                                                    content: Text(authProvider
+                                                            .errorMessage ??
+                                                        'Registration failed')),
                                               );
-                                            }
-                                          } on FirebaseAuthException catch (e) {
-                                            if (mounted) {
-                                              if (e.code ==
-                                                  'username-already-in-use') {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(
-                                                  const SnackBar(
-                                                      content: Text(
-                                                          'The username is already in use by another account.')),
-                                                );
-                                              } else if (e.code ==
-                                                  'email-already-in-use') {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(
-                                                  const SnackBar(
-                                                      content: Text(
-                                                          'The email address is already in use by another account.')),
-                                                );
-                                              } else if (e.code ==
-                                                  'weak-password') {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(
-                                                  const SnackBar(
-                                                      content: Text(
-                                                          'The password provided is too weak.')),
-                                                );
-                                              } else {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(
-                                                  SnackBar(
-                                                      content: Text(
-                                                          'Error: ${e.message}')),
-                                                );
-                                              }
                                             }
                                           } catch (e) {
                                             print(

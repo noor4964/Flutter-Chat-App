@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
@@ -40,8 +41,12 @@ void main() async {
   }
 
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => ThemeProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => ThemeProvider()),
+        ChangeNotifierProvider(
+            create: (context) => app_provider.AuthProvider()),
+      ],
       child: MyApp(),
     ),
   );
