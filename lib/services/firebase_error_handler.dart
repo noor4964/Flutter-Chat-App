@@ -7,13 +7,14 @@ import 'package:flutter_chat_app/services/firebase_config.dart';
 /// A utility class for handling Firebase-related errors and providing recovery options
 class FirebaseErrorHandler {
   // Singleton pattern
-  static final FirebaseErrorHandler _instance = FirebaseErrorHandler._internal();
+  static final FirebaseErrorHandler _instance =
+      FirebaseErrorHandler._internal();
   factory FirebaseErrorHandler() => _instance;
   FirebaseErrorHandler._internal();
 
   // Flag to track if we're currently in the recovery process
   bool _isRecovering = false;
-  
+
   // Flag to track if we should show error dialogs
   bool _suppressDialogs = false;
 
@@ -25,7 +26,8 @@ class FirebaseErrorHandler {
   }) async {
     // If we're already trying to recover, don't stack recovery attempts
     if (_isRecovering) {
-      print('🔄 Already attempting to recover from an error, skipping new recovery attempt');
+      print(
+          '🔄 Already attempting to recover from an error, skipping new recovery attempt');
       return false;
     }
 
@@ -34,16 +36,17 @@ class FirebaseErrorHandler {
 
     try {
       print('❌ Firebase error detected: $error');
-      
+
       // Check for specific Firestore error patterns
-      if (error.toString().contains('INTERNAL ASSERTION FAILED') || 
+      if (error.toString().contains('INTERNAL ASSERTION FAILED') ||
           error.toString().contains('Unexpected state')) {
-        print('🔍 Detected a Firestore assertion error, attempting recovery...');
-        
+        print(
+            '🔍 Detected a Firestore assertion error, attempting recovery...');
+
         // Clear Firestore cache and restart Firebase
         await FirebaseConfig.clearFirestoreCache();
         await FirebaseConfig.restartFirebase();
-        
+
         recovered = true;
         print('✅ Recovery process completed');
       }
@@ -55,12 +58,12 @@ class FirebaseErrorHandler {
           recovered = true;
         }
       }
-      
+
       // Show dialog if requested and we have a context
       if (showDialog && context != null && !_suppressDialogs) {
         _showErrorDialog(context, error, recovered);
       }
-      
+
       return recovered;
     } catch (e) {
       print('❌ Error during recovery process: $e');
@@ -69,7 +72,7 @@ class FirebaseErrorHandler {
       _isRecovering = false;
     }
   }
-  
+
   /// Suppress error dialogs (useful during initial app load)
   void suppressDialogs(bool suppress) {
     _suppressDialogs = suppress;
@@ -79,7 +82,7 @@ class FirebaseErrorHandler {
   void _showErrorDialog(BuildContext context, dynamic error, bool recovered) {
     // Don't show dialog if we don't have a valid context
     if (!context.mounted) return;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -125,5 +128,27 @@ class FirebaseErrorHandler {
         ],
       ),
     );
+  }
+
+  /// Check if the database connection is working
+  Future<bool> checkDatabaseConnection(BuildContext? context,
+      {bool showErrorDialog = true}) async {
+    try {
+      // Try to access a lightweight document to verify connection
+      await FirebaseFirestore.instance
+          .collection('connection_check')
+          .doc('status')
+          .get()
+          .timeout(const Duration(seconds: 5));
+      return true;
+    } catch (e) {
+      print('❌ Database connection check failed: $e');
+
+      if (context != null && showErrorDialog) {
+        await handleFirebaseException(e, context);
+      }
+
+      return false;
+    }
   }
 }

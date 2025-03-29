@@ -8,6 +8,7 @@ import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'package:flutter_chat_app/views/news_feed_screen.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/widgets/error_boundary.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class MessengerHomeScreen extends StatefulWidget {
   final bool isDesktop;
@@ -27,10 +28,15 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   bool _isMounted = false;
 
+  // State variable to store user profile image URL
+  String? _userProfileImageUrl;
+  String? _username;
+
   @override
   void initState() {
     super.initState();
     _isMounted = true;
+    _loadUserProfileData(); // Load profile data when screen initializes
   }
 
   @override
@@ -38,6 +44,32 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     _isMounted = false;
     _pageController.dispose();
     super.dispose();
+  }
+
+  // Load user profile data from Firestore
+  Future<void> _loadUserProfileData() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        var userData = userDoc.data() as Map<String, dynamic>?;
+        String? profileImageUrl = userData?['profileImageUrl'];
+        String? username = userData?['username'];
+
+        if (_isMounted && mounted) {
+          setState(() {
+            _userProfileImageUrl = profileImageUrl;
+            _username = username;
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading user profile data: $e');
+    }
   }
 
   // Safe setState that checks if widget is mounted before updating state
@@ -420,11 +452,14 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: InkWell(
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                // Navigate to profile screen and refresh profile image when returning
+                await Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => ProfileScreen()),
                 );
+                // Refresh profile image when returning from profile screen
+                _loadUserProfileData();
               },
               borderRadius: BorderRadius.circular(12),
               child: Padding(
@@ -452,7 +487,9 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            currentUser?.displayName ?? 'Chat User',
+                            _username ??
+                                currentUser?.displayName ??
+                                'Chat User',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -723,6 +760,12 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   // Helper method to get user profile image with error handling
   ImageProvider? _getUserProfileImage() {
     try {
+      // First check if we have a profile image URL from Firestore
+      if (_userProfileImageUrl != null) {
+        return NetworkImage(_userProfileImageUrl!);
+      }
+
+      // If not, try Firebase Auth as fallback
       final user = FirebaseAuth.instance.currentUser;
       if (user?.photoURL != null) {
         return NetworkImage(user!.photoURL!);

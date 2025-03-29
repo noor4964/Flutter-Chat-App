@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
-import 'package:flutter_chat_app/views/chat/chat_detail_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
 import 'package:flutter_chat_app/widgets/responsive_layout.dart';
@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/views/messenger_home_screen.dart';
+import 'package:flutter_chat_app/services/calls/call_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +29,11 @@ void main() async {
     // Create error handler immediately
     final errorHandler = FirebaseErrorHandler();
     errorHandler.suppressDialogs(true); // Prevent dialogs during startup
+
+    // Initialize CallKit plugin for handling calls
+    if (!PlatformHelper.isDesktop) {
+      await _initCallKit();
+    }
   } catch (e) {
     print('❌ Error during app initialization: $e');
     // We'll handle this in the app UI since we can't show dialogs here
@@ -39,6 +45,47 @@ void main() async {
       child: MyApp(),
     ),
   );
+}
+
+// Initialize CallKit for handling incoming/outgoing calls
+Future<void> _initCallKit() async {
+  try {
+    // Set up CallKit event listeners
+    FlutterCallkitIncoming.onEvent.listen((event) async {
+      final Map<String, dynamic> callEvent = event as Map<String, dynamic>;
+      print('CallKit event: ${callEvent['event']}');
+
+      switch (callEvent['event']) {
+        case 'ACTION_CALL_ACCEPT':
+          // User accepted the call
+          print('Call accepted: ${callEvent['body']}');
+          final CallService callService = CallService();
+          await callService.initialize();
+          await callService.answerCall(callEvent['body']['id']);
+          break;
+
+        case 'ACTION_CALL_DECLINE':
+          // User declined the call
+          print('Call declined: ${callEvent['body']}');
+          final CallService callService = CallService();
+          await callService.endCall(isDeclined: true);
+          break;
+
+        case 'ACTION_CALL_ENDED':
+          // Call ended
+          print('Call ended: ${callEvent['body']}');
+          break;
+
+        default:
+          print('Unhandled call event: ${callEvent['event']}');
+          break;
+      }
+    });
+
+    print('✅ CallKit initialized successfully');
+  } catch (e) {
+    print('❌ Error initializing CallKit: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {

@@ -9,6 +9,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:flutter_chat_app/services/calls/call_service.dart';
+import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
+import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -369,27 +372,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             icon: const Icon(Icons.call),
             color: theme.brightness == Brightness.dark ? null : Colors.white,
             tooltip: 'Voice Call',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Voice calling coming soon!'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
+            onPressed: _startAudioCall,
           ),
           IconButton(
             icon: const Icon(Icons.videocam),
             color: theme.brightness == Brightness.dark ? null : Colors.white,
             tooltip: 'Video Call',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Video calling coming soon!'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
+            onPressed: _startVideoCall,
           ),
           PopupMenuButton<String>(
             icon: Icon(
@@ -708,7 +697,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                     }
 
                                     return Hero(
-                                      tag: 'message-${message.id}',
+                                      tag:
+                                          'message-${message.id}-${message.timestamp.millisecondsSinceEpoch}',
                                       child: Material(
                                         color: Colors.transparent,
                                         child: ConstrainedBox(
@@ -1257,6 +1247,164 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         setState(() {
           _isSending = false;
         });
+      }
+    }
+  }
+
+  // Start an audio call
+  Future<void> _startAudioCall() async {
+    final CallService callService = CallService();
+
+    try {
+      // Initialize the call service if it hasn't been already
+      await callService.initialize();
+
+      // Get the chat participant's ID (the person to call)
+      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
+
+      if (!chatDoc.exists) {
+        throw Exception('Chat not found');
+      }
+
+      List<dynamic> userIds = chatDoc['userIds'];
+      String calleeId = "";
+
+      // Find the other user in the chat
+      for (var id in userIds) {
+        if (id != user!.uid) {
+          calleeId = id;
+          break;
+        }
+      }
+
+      if (calleeId.isEmpty) {
+        throw Exception('Call recipient not found');
+      }
+
+      // Show loading indicator
+      setState(() {
+        _isSending = true; // Reuse the sending indicator for loading
+      });
+
+      // Start the call
+      Call? call = await callService.startCall(
+          calleeId, false); // false = audio call, not video
+
+      setState(() {
+        _isSending = false;
+      });
+
+      if (call == null) {
+        throw Exception('Failed to start call');
+      }
+
+      // Navigate to the call screen
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => AudioCallScreen(
+              call: call,
+              isIncoming: false,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isSending = false;
+      });
+
+      print('Error starting call: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not start call: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Start a video call
+  Future<void> _startVideoCall() async {
+    final CallService callService = CallService();
+
+    try {
+      // Initialize the call service if it hasn't been already
+      await callService.initialize();
+
+      // Get the chat participant's ID (the person to call)
+      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
+
+      if (!chatDoc.exists) {
+        throw Exception('Chat not found');
+      }
+
+      List<dynamic> userIds = chatDoc['userIds'];
+      String calleeId = "";
+
+      // Find the other user in the chat
+      for (var id in userIds) {
+        if (id != user!.uid) {
+          calleeId = id;
+          break;
+        }
+      }
+
+      if (calleeId.isEmpty) {
+        throw Exception('Call recipient not found');
+      }
+
+      // Show loading indicator
+      setState(() {
+        _isSending = true; // Reuse the sending indicator for loading
+      });
+
+      // Start the call
+      Call? call = await callService.startCall(
+          calleeId, true); // true = video call, not audio only
+
+      setState(() {
+        _isSending = false;
+      });
+
+      if (call == null) {
+        throw Exception('Failed to start call');
+      }
+
+      // Navigate to the call screen
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VideoCallScreen(
+              call: call,
+              isIncoming: false,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isSending = false;
+      });
+
+      print('Error starting video call: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not start video call: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }

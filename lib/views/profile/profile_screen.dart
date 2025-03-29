@@ -4,8 +4,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' if (dart.library.html) 'dart:html' as html;
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:universal_io/io.dart';
+import 'package:path/path.dart' as path;
+import 'package:http_parser/http_parser.dart';
+import 'dart:typed_data';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -15,7 +20,8 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  File? _imageFile;
+  dynamic _imageFile; // Can be File or XFile depending on platform
+  Uint8List? _webImage; // For web platform
   late TextEditingController _usernameController;
   late TextEditingController _emailController;
   late TextEditingController _genderController;
@@ -40,7 +46,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadUserProfile() async {
     if (user != null) {
-      DocumentSnapshot userDoc = await _firestore.collection('users').doc(user!.uid).get();
+      DocumentSnapshot userDoc =
+          await _firestore.collection('users').doc(user!.uid).get();
       var userData = userDoc.data() as Map<String, dynamic>?;
       if (mounted) {
         setState(() {
@@ -55,11 +62,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _updateProfile() async {
     if (user != null) {
+      // First update Firestore
       await _firestore.collection('users').doc(user!.uid).update({
         'username': _usernameController.text,
         'email': _emailController.text,
         'gender': _genderController.text,
       });
+
+      // Then update Firebase Auth user's display name
+      await user!.updateDisplayName(_usernameController.text);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Profile updated successfully')),
@@ -69,11 +81,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _pickImage() async {
-    final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final ImagePicker picker = ImagePicker();
+    final XFile? pickedFile =
+        await picker.pickImage(source: ImageSource.gallery);
+
     if (pickedFile != null) {
-      setState(() {
-        _imageFile = File(pickedFile.path);
-      });
+      if (kIsWeb) {
+        // Handle web platform
+        var bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _webImage = bytes;
+          _imageFile = pickedFile;
+        });
+      } else {
+        // Handle mobile platforms
+        setState(() {
+          _imageFile = File(pickedFile.path);
+        });
+      }
       // Upload the image to Cloudinary and update the user's profile picture URL
       await _uploadProfilePicture();
     }
@@ -83,7 +108,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_imageFile != null && user != null) {
       try {
         // Upload the image to Cloudinary
-        String uploadUrl = 'https://api.cloudinary.com/v1_1/daekv7k8q/image/upload';
+        String uploadUrl =
+            'https://api.cloudinary.com/v1_1/daekv7k8q/image/upload';
         String apiKey = '354918315997393';
         String apiSecret = 'J9RlhhbDDovsyNpOGz67futNGj0';
         String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
@@ -91,9 +117,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
         var request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
         request.fields['api_key'] = apiKey;
         request.fields['timestamp'] = timestamp;
-        request.fields['signature'] = _generateSignature(apiSecret, timestamp, 'profile_picture');
+        request.fields['signature'] =
+            _generateSignature(apiSecret, timestamp, 'profile_picture');
         request.fields['upload_preset'] = 'profile_picture';
-        request.files.add(await http.MultipartFile.fromPath('file', _imageFile!.path));
+
+        // Handle file upload differently based on platform
+        if (kIsWeb) {
+          // For web
+          final fileName = path.basename((_imageFile as XFile).name);
+          final bytes = _webImage;
+
+          if (bytes != null) {
+            request.files.add(http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: fileName,
+              contentType:
+                  MediaType('image', 'jpeg'), // Adjust based on your needs
+            ));
+          }
+        } else {
+          // For mobile
+          request.files.add(await http.MultipartFile.fromPath(
+              'file', (_imageFile as File).path));
+        }
 
         var response = await request.send();
         var responseData = await http.Response.fromStream(response);
@@ -134,8 +181,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  String _generateSignature(String apiSecret, String timestamp, String uploadPreset) {
-    var bytes = utf8.encode('timestamp=$timestamp&upload_preset=$uploadPreset$apiSecret');
+  String _generateSignature(
+      String apiSecret, String timestamp, String uploadPreset) {
+    var bytes = utf8
+        .encode('timestamp=$timestamp&upload_preset=$uploadPreset$apiSecret');
     var digest = sha1.convert(bytes);
     return digest.toString();
   }
@@ -154,12 +203,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: _pickImage,
               child: CircleAvatar(
                 radius: 50,
-                backgroundImage: _imageFile != null
-                    ? FileImage(_imageFile!)
-                    : (_profilePictureUrl != null
-                        ? NetworkImage(_profilePictureUrl!)
-                        : null),
-                child: _imageFile == null && _profilePictureUrl == null
+                backgroundImage: _getProfileImage(),
+                child: (_imageFile == null && _profilePictureUrl == null)
                     ? Icon(Icons.person, size: 50)
                     : null,
               ),
@@ -194,5 +239,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  // Helper method to get the correct image provider based on platform
+  ImageProvider? _getProfileImage() {
+    if (_imageFile != null) {
+      if (kIsWeb && _webImage != null) {
+        return MemoryImage(_webImage!);
+      } else if (!kIsWeb) {
+        return FileImage(_imageFile as File);
+      }
+    } else if (_profilePictureUrl != null) {
+      return NetworkImage(_profilePictureUrl!);
+    }
+    return null;
   }
 }
