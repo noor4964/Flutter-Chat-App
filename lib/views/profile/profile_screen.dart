@@ -24,15 +24,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Uint8List? _webImage; // For web platform
   late TextEditingController _usernameController;
   late TextEditingController _emailController;
-  late TextEditingController _genderController;
+  late TextEditingController _bioController;
+  late TextEditingController _phoneController;
+  late TextEditingController _locationController;
+  bool _isLoading = false;
+  bool _isSubmitting = false;
   String? _profilePictureUrl;
+  final _formKey = GlobalKey<FormState>();
+  bool _readOnlyEmail = true;
 
   @override
   void initState() {
     super.initState();
     _usernameController = TextEditingController();
     _emailController = TextEditingController();
-    _genderController = TextEditingController();
+    _bioController = TextEditingController();
+    _phoneController = TextEditingController();
+    _locationController = TextEditingController();
     _loadUserProfile();
   }
 
@@ -40,51 +48,139 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void dispose() {
     _usernameController.dispose();
     _emailController.dispose();
-    _genderController.dispose();
+    _bioController.dispose();
+    _phoneController.dispose();
+    _locationController.dispose();
     super.dispose();
   }
 
   Future<void> _loadUserProfile() async {
+    setState(() {
+      _isLoading = true;
+    });
+
     if (user != null) {
-      DocumentSnapshot userDoc =
-          await _firestore.collection('users').doc(user!.uid).get();
-      var userData = userDoc.data() as Map<String, dynamic>?;
-      if (mounted) {
-        setState(() {
-          _usernameController.text = userData?['username'] ?? '';
-          _emailController.text = userData?['email'] ?? '';
-          _genderController.text = userData?['gender'] ?? '';
-          _profilePictureUrl = userData?['profileImageUrl'] ?? null;
-        });
+      try {
+        DocumentSnapshot userDoc =
+            await _firestore.collection('users').doc(user!.uid).get();
+        var userData = userDoc.data() as Map<String, dynamic>?;
+        if (mounted) {
+          setState(() {
+            _usernameController.text = userData?['username'] ?? '';
+            _emailController.text = userData?['email'] ?? user?.email ?? '';
+            _bioController.text = userData?['bio'] ?? '';
+            _phoneController.text = userData?['phone'] ?? '';
+            _locationController.text = userData?['location'] ?? '';
+            _profilePictureUrl = userData?['profileImageUrl'] ?? null;
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        print('Error loading profile: $e');
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to load profile data')),
+          );
+        }
       }
     }
   }
 
   Future<void> _updateProfile() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
     if (user != null) {
-      // First update Firestore
-      await _firestore.collection('users').doc(user!.uid).update({
-        'username': _usernameController.text,
-        'email': _emailController.text,
-        'gender': _genderController.text,
-      });
+      try {
+        // First update Firestore
+        await _firestore.collection('users').doc(user!.uid).update({
+          'username': _usernameController.text,
+          'email': _emailController.text,
+          'bio': _bioController.text,
+          'phone': _phoneController.text,
+          'location': _locationController.text,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
 
-      // Then update Firebase Auth user's display name
-      await user!.updateDisplayName(_usernameController.text);
+        // Then update Firebase Auth user's display name
+        await user!.updateDisplayName(_usernameController.text);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Profile updated successfully')),
-        );
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Profile updated successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        print('Error updating profile: $e');
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to update profile: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
   }
 
   Future<void> _pickImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? pickedFile =
-        await picker.pickImage(source: ImageSource.gallery);
 
+    // Show a dialog to choose between camera and gallery
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading: Icon(Icons.photo_library),
+                title: Text('Photo Library'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final XFile? pickedFile =
+                      await picker.pickImage(source: ImageSource.gallery);
+                  _processPickedImage(pickedFile);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.photo_camera),
+                title: Text('Camera'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final XFile? pickedFile =
+                      await picker.pickImage(source: ImageSource.camera);
+                  _processPickedImage(pickedFile);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _processPickedImage(XFile? pickedFile) async {
     if (pickedFile != null) {
       if (kIsWeb) {
         // Handle web platform
@@ -104,9 +200,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // Rest of the image upload functionality remains the same
   Future<void> _uploadProfilePicture() async {
     if (_imageFile != null && user != null) {
       try {
+        setState(() {
+          _isLoading = true;
+        });
+
+        // Show a loading indicator
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Uploading profile picture...')),
+        );
+
         // Upload the image to Cloudinary
         String uploadUrl =
             'https://api.cloudinary.com/v1_1/daekv7k8q/image/upload';
@@ -145,9 +251,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         var response = await request.send();
         var responseData = await http.Response.fromStream(response);
 
-        print('Response status: ${response.statusCode}');
-        print('Response body: ${responseData.body}');
-
         if (response.statusCode == 200) {
           var responseDataJson = json.decode(responseData.body);
           String downloadUrl = responseDataJson['secure_url'];
@@ -160,21 +263,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (mounted) {
             setState(() {
               _profilePictureUrl = downloadUrl;
+              _isLoading = false;
             });
 
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Profile picture updated successfully')),
+              SnackBar(
+                content: Text('Profile picture updated successfully'),
+                backgroundColor: Colors.green,
+              ),
             );
           }
         } else {
           print('Failed to upload profile picture: ${responseData.body}');
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to upload profile picture'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
           throw Exception('Failed to upload profile picture');
         }
       } catch (e) {
         print('Exception: $e');
         if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to upload profile picture: $e')),
+            SnackBar(
+              content: Text('Failed to upload profile picture: $e'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
       }
@@ -191,53 +315,354 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Profile'),
+        title: Text('My Profile'),
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.help_outline),
+            onPressed: () {
+              // Show a help dialog
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text('Profile Help'),
+                  content: Text(
+                      'This screen allows you to update your profile information.'
+                      '\n\n• Tap on your profile picture to change it'
+                      '\n• Fill in your details and tap Save to update'
+                      '\n• Your email address cannot be changed'),
+                  actions: [
+                    TextButton(
+                      child: Text('Got it'),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: <Widget>[
-            GestureDetector(
-              onTap: _pickImage,
-              child: CircleAvatar(
-                radius: 50,
-                backgroundImage: _getProfileImage(),
-                child: (_imageFile == null && _profilePictureUrl == null)
-                    ? Icon(Icons.person, size: 50)
-                    : null,
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: Column(
+                children: [
+                  // Profile Header Section
+                  Container(
+                    padding: EdgeInsets.only(bottom: 24),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer.withOpacity(0.3),
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(30),
+                        bottomRight: Radius.circular(30),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        SizedBox(height: 20),
+                        Stack(
+                          alignment: Alignment.bottomRight,
+                          children: [
+                            GestureDetector(
+                              onTap: _pickImage,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: colorScheme.primary,
+                                    width: 4,
+                                  ),
+                                ),
+                                child: CircleAvatar(
+                                  radius: 64,
+                                  backgroundColor: colorScheme.primaryContainer,
+                                  backgroundImage: _getProfileImage(),
+                                  child: (_imageFile == null &&
+                                          _profilePictureUrl == null)
+                                      ? Icon(Icons.person,
+                                          size: 64, color: colorScheme.primary)
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color:
+                                      Theme.of(context).scaffoldBackgroundColor,
+                                  width: 3,
+                                ),
+                              ),
+                              child: IconButton(
+                                icon: Icon(Icons.camera_alt,
+                                    color: Colors.white, size: 20),
+                                onPressed: _pickImage,
+                                constraints: BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          _usernameController.text.isEmpty
+                              ? (user?.displayName ?? 'Update your profile')
+                              : _usernameController.text,
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          user?.email ?? '',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Form Section
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Personal Information',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          SizedBox(height: 16),
+
+                          // Username field
+                          TextFormField(
+                            controller: _usernameController,
+                            decoration: InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter a username';
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: 16),
+
+                          // Email field (read-only)
+                          TextFormField(
+                            controller: _emailController,
+                            readOnly: _readOnlyEmail,
+                            decoration: InputDecoration(
+                              labelText: 'Email',
+                              prefixIcon: Icon(Icons.email),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _readOnlyEmail ? Icons.lock : Icons.lock_open,
+                                  color: _readOnlyEmail
+                                      ? Colors.grey
+                                      : colorScheme.primary,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _readOnlyEmail = !_readOnlyEmail;
+                                  });
+                                  if (_readOnlyEmail) {
+                                    // Reset to original email if locked again
+                                    _emailController.text = user?.email ?? '';
+                                  }
+                                },
+                              ),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter an email';
+                              }
+                              // Basic email validation
+                              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                                  .hasMatch(value)) {
+                                return 'Please enter a valid email';
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: 24),
+
+                          Text(
+                            'Additional Information',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          SizedBox(height: 16),
+
+                          // Bio field
+                          TextFormField(
+                            controller: _bioController,
+                            decoration: InputDecoration(
+                              labelText: 'Bio',
+                              prefixIcon: Icon(Icons.description),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                            ),
+                            maxLines: 3,
+                          ),
+                          SizedBox(height: 16),
+
+                          // Phone field
+                          TextFormField(
+                            controller: _phoneController,
+                            decoration: InputDecoration(
+                              labelText: 'Phone',
+                              prefixIcon: Icon(Icons.phone),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                            ),
+                            keyboardType: TextInputType.phone,
+                          ),
+                          SizedBox(height: 16),
+
+                          // Location field
+                          TextFormField(
+                            controller: _locationController,
+                            decoration: InputDecoration(
+                              labelText: 'Location',
+                              prefixIcon: Icon(Icons.location_on),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                            ),
+                          ),
+                          SizedBox(height: 32),
+
+                          // Save button
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: _isSubmitting ? null : _updateProfile,
+                              style: ElevatedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                backgroundColor: colorScheme.primary,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: _isSubmitting
+                                  ? CircularProgressIndicator(
+                                      color: Colors.white)
+                                  : Text(
+                                      'Save Changes',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          SizedBox(height: 16),
+
+                          // Sign out button
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                // Show confirmation dialog
+                                bool? confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: Text('Sign Out'),
+                                    content: Text(
+                                        'Are you sure you want to sign out?'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(context).pop(false),
+                                        child: Text('Cancel'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () =>
+                                            Navigator.of(context).pop(true),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red,
+                                        ),
+                                        child: Text('Sign Out'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+
+                                if (confirm == true) {
+                                  await FirebaseAuth.instance.signOut();
+                                  Navigator.pushReplacementNamed(
+                                      context, '/login');
+                                }
+                              },
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: Colors.red),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: Text(
+                                'Sign Out',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            SizedBox(height: 20),
-            TextField(
-              decoration: InputDecoration(labelText: 'Username'),
-              controller: _usernameController,
-            ),
-            TextField(
-              decoration: InputDecoration(labelText: 'Email'),
-              controller: _emailController,
-            ),
-            TextField(
-              decoration: InputDecoration(labelText: 'Gender'),
-              controller: _genderController,
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _updateProfile,
-              child: Text('Update Profile'),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () async {
-                await FirebaseAuth.instance.signOut();
-                Navigator.pushReplacementNamed(context, '/login');
-              },
-              child: Text('Logout'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
