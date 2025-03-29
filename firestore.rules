@@ -91,5 +91,24 @@ service cloud.firestore {
       allow read, delete: if isAuthenticated() && request.auth.uid == resource.data.receiverId;
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.senderId;
     }
+
+    // ✅ Posts Collection (Social Media Feed)
+    match /posts/{postId} {
+      // Anyone who is authenticated can read posts
+      allow read: if isAuthenticated();
+      
+      // Only the post owner can create posts with their user ID
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      
+      // Only the post owner can update or delete their posts
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      }
+    }
   }
 }

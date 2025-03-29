@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/models/post_model.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
-import 'package:intl/intl.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 class PostCard extends StatefulWidget {
   final Post post;
@@ -20,26 +21,44 @@ class _PostCardState extends State<PostCard>
   final FeedService _feedService = FeedService();
   late bool _isLiked;
   late int _likeCount;
+  late int _commentsCount;
   final TextEditingController _commentController = TextEditingController();
   late AnimationController _likeAnimationController;
   bool _isDoubleTapping = false;
+
+  // Stream subscription for real-time post updates
+  StreamSubscription<Post>? _postSubscription;
 
   @override
   void initState() {
     super.initState();
     _isLiked = widget.post.isLikedBy(_feedService.currentUserId ?? '');
     _likeCount = widget.post.likes.length;
+    _commentsCount = widget.post.commentsCount;
 
     _likeAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+
+    // Subscribe to real-time updates for this post
+    _postSubscription =
+        _feedService.getPostById(widget.post.id).listen((updatedPost) {
+      if (mounted) {
+        setState(() {
+          _isLiked = updatedPost.isLikedBy(_feedService.currentUserId ?? '');
+          _likeCount = updatedPost.likes.length;
+          _commentsCount = updatedPost.commentsCount;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _commentController.dispose();
     _likeAnimationController.dispose();
+    _postSubscription?.cancel();
     super.dispose();
   }
 
@@ -337,8 +356,6 @@ class _PostCardState extends State<PostCard>
   }
 
   void _showPostOptions(BuildContext context) {
-    final theme = Theme.of(context);
-
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -465,78 +482,180 @@ class _PostCardState extends State<PostCard>
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Text(
-                  'Comments',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return Column(
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ),
-              const Divider(),
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: Colors.grey[300],
-                      backgroundImage: _feedService.currentUserId != null
-                          ? NetworkImage(widget.post.userProfileImage)
-                          : null,
-                      child: _feedService.currentUserId == null
-                          ? const Icon(Icons.person, size: 16)
-                          : null,
+                const SizedBox(height: 8),
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    'Comments',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _commentController,
-                        decoration: const InputDecoration(
-                          hintText: 'Add a comment...',
-                          border: InputBorder.none,
-                        ),
-                        maxLines: 1,
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        if (_commentController.text.trim().isNotEmpty) {
-                          _feedService.addComment(
-                            widget.post.id,
-                            _commentController.text.trim(),
-                          );
-                          _commentController.clear();
-                          Navigator.pop(context);
-                        }
-                      },
-                      child: const Text('Post'),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+                const Divider(),
+                // Comments list
+                Expanded(
+                  child: StreamBuilder<List<Map<String, dynamic>>>(
+                    stream: _feedService.getComments(widget.post.id,
+                        context: context),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Error loading comments: ${snapshot.error}',
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        );
+                      }
+
+                      final comments = snapshot.data ?? [];
+
+                      if (comments.isEmpty) {
+                        return const Center(
+                          child:
+                              Text('No comments yet. Be the first to comment!'),
+                        );
+                      }
+
+                      return ListView.builder(
+                        controller: scrollController,
+                        itemCount: comments.length,
+                        itemBuilder: (context, index) {
+                          final comment = comments[index];
+                          return ListTile(
+                            leading: CircleAvatar(
+                              radius: 16,
+                              backgroundImage: comment['userProfileImage'] !=
+                                          null &&
+                                      comment['userProfileImage'].isNotEmpty
+                                  ? NetworkImage(comment['userProfileImage'])
+                                  : null,
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer,
+                              child: comment['userProfileImage'] == null ||
+                                      comment['userProfileImage'].isEmpty
+                                  ? Text(
+                                      comment['username'] != null &&
+                                              comment['username'].isNotEmpty
+                                          ? comment['username'][0].toUpperCase()
+                                          : '?',
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                            title: RichText(
+                              text: TextSpan(
+                                style: TextStyle(
+                                  color: Theme.of(context).brightness ==
+                                          Brightness.dark
+                                      ? Colors.white
+                                      : Colors.black,
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text:
+                                        '${comment['username'] ?? 'Anonymous'} ',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                  TextSpan(text: comment['text'] ?? ''),
+                                ],
+                              ),
+                            ),
+                            subtitle: comment['timestamp'] != null
+                                ? Text(
+                                    timeago.format(
+                                        (comment['timestamp'] as Timestamp)
+                                            .toDate()),
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 12,
+                                    ),
+                                  )
+                                : null,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+                // Comment input field
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: 16.0,
+                    right: 16.0,
+                    top: 8.0,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 8.0,
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: Colors.grey[300],
+                        backgroundImage: _feedService.currentUserId != null
+                            ? NetworkImage(widget.post.userProfileImage)
+                            : null,
+                        child: _feedService.currentUserId == null
+                            ? const Icon(Icons.person, size: 16)
+                            : null,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _commentController,
+                          decoration: const InputDecoration(
+                            hintText: 'Add a comment...',
+                            border: InputBorder.none,
+                          ),
+                          maxLines: 1,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          if (_commentController.text.trim().isNotEmpty) {
+                            _feedService.addComment(
+                              widget.post.id,
+                              _commentController.text.trim(),
+                            );
+                            _commentController.clear();
+                          }
+                        },
+                        child: const Text('Post'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );

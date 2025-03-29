@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
 import 'package:flutter_chat_app/models/post_model.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/image_picker_helper.dart';
 import 'package:flutter_chat_app/widgets/post_card.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
-import 'package:flutter_chat_app/services/firebase_config.dart';
+import 'package:image_picker/image_picker.dart';
 
 class NewsFeedScreen extends StatefulWidget {
   const NewsFeedScreen({Key? key}) : super(key: key);
@@ -23,8 +24,6 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
   final FeedService _feedService = FeedService();
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   final ScrollController _scrollController = ScrollController();
-  bool _isLoading = false;
-  bool _isRefreshing = false;
   bool _showFab = true;
   String? _currentUserProfileImageUrl;
   String? _currentUsername;
@@ -150,7 +149,6 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
     if (!mounted) return;
 
     setState(() {
-      _isRefreshing = true;
       _errorMessage = null;
     });
 
@@ -177,7 +175,6 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
     } finally {
       if (mounted) {
         setState(() {
-          _isRefreshing = false;
           _isRecovering = false;
         });
       }
@@ -802,10 +799,14 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
   }
 
   void _showCreatePostDialog() {
-    final ImagePickerHelper imagePickerHelper = ImagePickerHelper();
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     bool isDarkMode = theme.brightness == Brightness.dark;
+
+    // Variables to store post data
+    String caption = '';
+    String location = '';
+    XFile? pickedImage;
 
     showModalBottomSheet(
       context: context,
@@ -885,6 +886,73 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
 
                   const SizedBox(height: 16),
 
+                  // Image preview if an image is picked
+                  if (pickedImage != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Stack(
+                        children: [
+                          Container(
+                            height: 200,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              color: Colors.grey[200],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: kIsWeb
+                                  ? FutureBuilder<Uint8List>(
+                                      future: pickedImage?.readAsBytes(),
+                                      builder: (context, snapshot) {
+                                        if (snapshot.connectionState ==
+                                                ConnectionState.done &&
+                                            snapshot.hasData) {
+                                          return Image.memory(
+                                            snapshot.data!,
+                                            fit: BoxFit.cover,
+                                          );
+                                        }
+                                        return const Center(
+                                          child: CircularProgressIndicator(),
+                                        );
+                                      },
+                                    )
+                                  : Image.file(
+                                      File(pickedImage!.path),
+                                      fit: BoxFit.cover,
+                                    ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  pickedImage = null;
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.6),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  const SizedBox(height: 16),
+
                   // Caption input field
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -910,55 +978,98 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
                         ),
                       ),
                       maxLines: 3,
+                      onChanged: (value) {
+                        caption = value;
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Location input field
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: TextField(
+                      decoration: InputDecoration(
+                        hintText: 'Add location (optional)',
+                        prefixIcon: Icon(Icons.location_on_outlined),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Colors.grey[300]!,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      onChanged: (value) {
+                        location = value;
+                      },
                     ),
                   ),
 
                   const SizedBox(height: 24),
 
-                  // Media picker options
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: isDarkMode
-                          ? colorScheme.surfaceVariant
-                          : Colors.grey[100],
-                      borderRadius: BorderRadius.circular(16),
+                  // Media picker options - only show if no image is picked yet
+                  if (pickedImage == null)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: isDarkMode
+                            ? colorScheme.surfaceVariant
+                            : Colors.grey[100],
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildPickerOption(
+                            icon: Icons.photo_library,
+                            title: 'Photo Gallery',
+                            subtitle: 'Share photos from your gallery',
+                            onTap: () async {
+                              // Pick image from gallery
+                              XFile? image = await _feedService
+                                  .pickImageFromSource(ImageSource.gallery,
+                                      context: context);
+                              if (image != null) {
+                                setState(() {
+                                  pickedImage = image;
+                                });
+                              }
+                            },
+                            iconColor: Colors.purple,
+                          ),
+                          Divider(
+                              height: 1, thickness: 1, color: Colors.grey[200]),
+                          _buildPickerOption(
+                            icon: Icons.camera_alt,
+                            title: 'Camera',
+                            subtitle: 'Take a new photo',
+                            onTap: () async {
+                              // Open camera
+                              XFile? image = await _feedService
+                                  .pickImageFromSource(ImageSource.camera,
+                                      context: context);
+                              if (image != null) {
+                                setState(() {
+                                  pickedImage = image;
+                                });
+                              }
+                            },
+                            iconColor: Colors.red,
+                          ),
+                        ],
+                      ),
                     ),
-                    child: Column(
-                      children: [
-                        _buildPickerOption(
-                          icon: Icons.photo_library,
-                          title: 'Photo Gallery',
-                          subtitle: 'Share photos from your gallery',
-                          onTap: () {
-                            // Show image picker
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Image picker coming soon!'),
-                              ),
-                            );
-                          },
-                          iconColor: Colors.purple,
-                        ),
-                        Divider(
-                            height: 1, thickness: 1, color: Colors.grey[200]),
-                        _buildPickerOption(
-                          icon: Icons.camera_alt,
-                          title: 'Camera',
-                          subtitle: 'Take a new photo',
-                          onTap: () {
-                            // Open camera
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Camera picker coming soon!'),
-                              ),
-                            );
-                          },
-                          iconColor: Colors.red,
-                        ),
-                      ],
-                    ),
-                  ),
 
                   const SizedBox(height: 24),
 
@@ -968,21 +1079,42 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
                     child: SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () {
-                          // Create post functionality
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Post created successfully!'),
-                            ),
-                          );
-                        },
+                        onPressed: pickedImage == null || caption.trim().isEmpty
+                            ? null // Disable button if no image or caption
+                            : () async {
+                                // Close the bottom sheet
+                                Navigator.pop(context);
+
+                                // Show loading indicator
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Creating your post...'),
+                                    duration: Duration(seconds: 5),
+                                  ),
+                                );
+
+                                // Create post with the image and caption
+                                bool success =
+                                    await _feedService.createPostWithImage(
+                                  pickedImage: pickedImage,
+                                  caption: caption,
+                                  location: location,
+                                  context: context,
+                                );
+
+                                if (success && mounted) {
+                                  // Success message is already shown by the feed service
+                                  // Refresh feed to show the new post
+                                  _refresh();
+                                }
+                              },
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(30),
                           ),
                           backgroundColor: colorScheme.primary,
+                          disabledBackgroundColor: Colors.grey[400],
                         ),
                         child: const Text(
                           'Post',

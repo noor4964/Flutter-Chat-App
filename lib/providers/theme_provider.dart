@@ -143,12 +143,39 @@ class ThemeProvider extends ChangeNotifier {
   double get fontSizeMultiplier => _fontSizeFactors[_fontSize] ?? 1.0;
 
   ThemeData _buildLightTheme() {
-    final ColorScheme colorScheme = ColorScheme.light(
+    final ColorScheme colorScheme = ColorScheme(
+      brightness: Brightness.light,
       primary: _primaryColor,
+      onPrimary: Colors.white,
+      primaryContainer: _primaryColor,
+      onPrimaryContainer: Colors.white,
       secondary: _primaryColor.withOpacity(0.7),
-      surface: Colors.white,
-      background: Colors.grey[50]!,
+      onSecondary: Colors.white,
+      secondaryContainer: _primaryColor.withOpacity(0.7),
+      onSecondaryContainer: Colors.white,
+      tertiary: _primaryColor.withOpacity(0.7),
+      onTertiary: Colors.white,
+      tertiaryContainer: _primaryColor.withOpacity(0.7),
+      onTertiaryContainer: Colors.white,
       error: Colors.red[700]!,
+      onError: Colors.white,
+      errorContainer: Colors.red[700]!,
+      onErrorContainer: Colors.white,
+      // Replace deprecated background with surface
+      surface: Colors.white,
+      onSurface: Colors.black,
+      surfaceVariant: Colors.grey[200]!,
+      onSurfaceVariant: Colors.black,
+      outline: Colors.grey[400]!,
+      outlineVariant: Colors.grey[400]!,
+      shadow: Colors.black,
+      scrim: Colors.black,
+      inverseSurface: Colors.black,
+      onInverseSurface: Colors.white,
+      inversePrimary: Colors.white,
+      surfaceTint: _primaryColor,
+      // Add newer properties
+      surfaceContainerHighest: Colors.white,
     );
 
     final baseTheme = ThemeData(
@@ -239,12 +266,39 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   ThemeData _buildDarkTheme() {
-    final ColorScheme colorScheme = ColorScheme.dark(
+    final ColorScheme colorScheme = ColorScheme(
+      brightness: Brightness.dark,
       primary: _primaryColor,
+      onPrimary: Colors.white,
+      primaryContainer: _primaryColor,
+      onPrimaryContainer: Colors.white,
       secondary: _primaryColor.withOpacity(0.7),
-      surface: Colors.grey[900]!,
-      background: Colors.grey[850]!,
+      onSecondary: Colors.white,
+      secondaryContainer: _primaryColor.withOpacity(0.7),
+      onSecondaryContainer: Colors.white,
+      tertiary: _primaryColor.withOpacity(0.7),
+      onTertiary: Colors.white,
+      tertiaryContainer: _primaryColor.withOpacity(0.7),
+      onTertiaryContainer: Colors.white,
       error: Colors.red[500]!,
+      onError: Colors.white,
+      errorContainer: Colors.red[500]!,
+      onErrorContainer: Colors.white,
+      // Replace deprecated background with surface
+      surface: Colors.grey[900]!,
+      onSurface: Colors.white,
+      surfaceVariant: Colors.grey[850]!,
+      onSurfaceVariant: Colors.white,
+      outline: Colors.grey[600]!,
+      outlineVariant: Colors.grey[600]!,
+      shadow: Colors.black,
+      scrim: Colors.black,
+      inverseSurface: Colors.white,
+      onInverseSurface: Colors.black,
+      inversePrimary: Colors.white,
+      surfaceTint: _primaryColor,
+      // Add newer properties
+      surfaceContainerHighest: Colors.white,
     );
 
     final baseTheme = ThemeData(

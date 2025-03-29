@@ -1,15 +1,20 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_chat_app/models/post_model.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
-import 'package:flutter_chat_app/services/firebase_config.dart';
+import 'package:flutter_chat_app/services/cloudinary_service.dart';
 
 class FeedService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
+  final ImagePicker _picker = ImagePicker();
 
   // Get current user ID
   String? get currentUserId => _auth.currentUser?.uid;
@@ -270,26 +275,63 @@ class FeedService {
     }
   }
 
-  // A manual method to attempt recovery from Firestore errors
-  Future<bool> attemptRecovery({BuildContext? context}) async {
+  // Get comments for a post with error handling
+  Stream<List<Map<String, dynamic>>> getComments(String postId,
+      {BuildContext? context}) {
     try {
-      print('🔄 Manually attempting feed service recovery...');
+      // Create a stream transformer to handle errors
+      StreamTransformer<QuerySnapshot<Map<String, dynamic>>,
+              QuerySnapshot<Map<String, dynamic>>> errorHandler =
+          StreamTransformer<QuerySnapshot<Map<String, dynamic>>,
+              QuerySnapshot<Map<String, dynamic>>>.fromHandlers(
+        handleError: (error, stackTrace, sink) async {
+          print('❌ Error in getComments stream: $error');
 
-      // First try to clear Firestore cache
-      await FirebaseConfig.clearFirestoreCache();
+          // Try to recover from the error
+          bool recovered =
+              await _errorHandler.handleFirebaseException(error, context);
 
-      // Then restart Firebase
-      await FirebaseConfig.restartFirebase();
+          if (recovered) {
+            // If recovery was successful, notify about error but don't break the stream
+            _errorController.add(
+                "Comments temporarily unavailable. Attempting to reconnect...");
+          } else {
+            // If recovery failed, propagate the error
+            _errorController
+                .add("Unable to load comments. Please try again later.");
+            sink.addError(error, stackTrace);
+          }
+        },
+      );
 
-      // Test a simple read to verify recovery
-      await _firestore.collection('posts').limit(1).get();
-
-      print('✅ Manual recovery successful');
-      return true;
+      return _firestore
+          .collection('posts')
+          .doc(postId)
+          .collection('comments')
+          .orderBy('timestamp', descending: false)
+          .snapshots()
+          .transform(errorHandler) // Apply the error handler
+          .map((snapshot) {
+        try {
+          return snapshot.docs.map((doc) {
+            var data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList();
+        } catch (e) {
+          print('❌ Error parsing comments: $e');
+          _errorController
+              .add("Error loading comments. Data might be corrupted.");
+          return <Map<String, dynamic>>[];
+        }
+      });
     } catch (e) {
-      print('❌ Manual recovery failed: $e');
-      await _errorHandler.handleFirebaseException(e, context);
-      return false;
+      print('❌ Fatal error setting up comments stream: $e');
+      _errorController
+          .add("Critical error in comments service. Please try again.");
+
+      // Return an empty stream to avoid breaking the UI
+      return Stream.value(<Map<String, dynamic>>[]);
     }
   }
 
@@ -298,50 +340,383 @@ class FeedService {
     _errorController.close();
   }
 
-  // Initialize posts collection with a sample post
+  // Check if the user has created any posts yet
+  Future<bool> hasUserCreatedPosts({BuildContext? context}) async {
+    if (currentUserId == null) return false;
+
+    try {
+      // Check if the current user has any posts
+      final userPostsSnapshot = await _firestore
+          .collection('posts')
+          .where('userId', isEqualTo: currentUserId)
+          .limit(1)
+          .get();
+
+      return userPostsSnapshot.docs.isNotEmpty;
+    } catch (e) {
+      print('❌ Error checking user posts: $e');
+      _errorController.add("Couldn't check user posts. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      return false;
+    }
+  }
+
+  // Initialize posts collection for the current user
   Future<void> initializePostsCollection({BuildContext? context}) async {
     if (currentUserId == null) return;
 
     try {
-      // Check if posts collection exists and has documents
-      final postsSnapshot = await _firestore.collection('posts').limit(1).get();
+      // Check if user has created any posts
+      bool hasExistingPosts = await hasUserCreatedPosts(context: context);
 
-      if (postsSnapshot.docs.isEmpty) {
-        print('🔄 Initializing posts collection with sample data...');
-
-        // Get user data for the sample post
-        DocumentSnapshot userDoc =
-            await _firestore.collection('users').doc(currentUserId).get();
-
-        if (!userDoc.exists) {
-          throw Exception("User document doesn't exist!");
-        }
-
-        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
-
-        // Create a sample post
-        Post samplePost = Post(
-          id: '', // Will be set by Firestore
-          userId: currentUserId!,
-          username: userData['username'] ?? 'Anonymous',
-          userProfileImage: userData['profileImageUrl'] ?? '',
-          caption: 'Welcome to my first post! 👋',
-          imageUrl:
-              'https://picsum.photos/seed/sample/500/500', // Random placeholder image
-          timestamp: DateTime.now(),
-          likes: [],
-          commentsCount: 0,
-          location: 'Sample Location',
-        );
-
-        await _firestore.collection('posts').add(samplePost.toMap());
-        print('✅ Posts collection initialized successfully');
+      if (!hasExistingPosts) {
+        // Just check the user posts collection, no need to create a demo post
+        print('📝 Initializing posts collection for user: $currentUserId');
       }
     } catch (e) {
       print('❌ Error initializing posts collection: $e');
       _errorController.add("Couldn't initialize posts. Please try again.");
       await _errorHandler.handleFirebaseException(e, context);
-      rethrow;
+    }
+  }
+
+  // No longer creates a sample post but checks if user has posts
+  Future<void> checkUserPostsCollection({BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      // Check if user has created any posts
+      bool hasExistingPosts = await hasUserCreatedPosts(context: context);
+
+      if (!hasExistingPosts) {
+        // User has no posts yet, but we don't create a demo post
+        // Instead, we could show a UI hint to create a first post
+        print('📝 User has no posts yet. They should create their first post!');
+      }
+    } catch (e) {
+      print('❌ Error checking posts collection: $e');
+      _errorController.add("Couldn't check posts. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+    }
+  }
+
+  // Pick image from camera or gallery and return XFile
+  Future<XFile?> pickImageFromSource(ImageSource source,
+      {BuildContext? context}) async {
+    try {
+      final XFile? pickedFile = await _picker.pickImage(source: source);
+      return pickedFile;
+    } catch (e) {
+      print('❌ Error picking image: $e');
+      _errorController.add("Couldn't pick image. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      return null;
+    }
+  }
+
+  // Process picked image and return the file and web image bytes
+  Future<Map<String, dynamic>> processPickedImage(XFile? pickedFile) async {
+    dynamic imageFile;
+    Uint8List? webImage;
+
+    if (pickedFile == null) {
+      return {'imageFile': null, 'webImage': null};
+    }
+
+    try {
+      if (kIsWeb) {
+        // Handle web platform
+        var bytes = await pickedFile.readAsBytes();
+        webImage = bytes;
+        imageFile = pickedFile;
+      } else {
+        // Handle mobile platforms
+        imageFile = File(pickedFile.path);
+      }
+
+      return {
+        'imageFile': imageFile,
+        'webImage': webImage,
+      };
+    } catch (e) {
+      print('❌ Error processing image: $e');
+      return {'imageFile': null, 'webImage': null};
+    }
+  }
+
+  // Upload image to Cloudinary and return the URL
+  Future<String?> uploadFeedImage({
+    required dynamic imageFile,
+    Uint8List? webImage,
+    BuildContext? context,
+  }) async {
+    if (imageFile == null) return null;
+
+    try {
+      // Add detailed logging
+      print('🔄 Starting feed image upload process');
+
+      // Upload the image to Cloudinary using our service
+      String downloadUrl = await CloudinaryService.uploadImage(
+        imageFile: imageFile,
+        webImage: webImage,
+        preset: CloudinaryService.feedPostPreset,
+      );
+
+      return downloadUrl;
+    } catch (e) {
+      print('❌ Error uploading feed image: $e');
+
+      // Provide a more detailed error message based on the exception
+      if (e.toString().contains('timed out')) {
+        _errorController.add(
+            "Upload timed out. Please check your internet connection and try again.");
+      } else if (e.toString().contains('Failed to upload image')) {
+        _errorController.add(
+            "Image upload failed. Please try with a smaller image or check your network.");
+      } else {
+        _errorController
+            .add("Couldn't upload image: ${e.toString().split(':').last}");
+      }
+
+      await _errorHandler.handleFirebaseException(e, context);
+      return null;
+    }
+  }
+
+  // Create a post with an image - full process
+  Future<bool> createPostWithImage({
+    required XFile? pickedImage,
+    required String caption,
+    String location = '',
+    BuildContext? context,
+  }) async {
+    if (currentUserId == null) {
+      _errorController.add("You must be logged in to create a post");
+      return false;
+    }
+
+    if (pickedImage == null) {
+      _errorController.add("No image selected for post");
+      return false;
+    }
+
+    if (caption.trim().isEmpty) {
+      _errorController.add("Caption cannot be empty");
+      return false;
+    }
+
+    try {
+      // Show loading indicator if context is provided
+      if (context != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Creating post...'),
+              duration: Duration(seconds: 30)),
+        );
+      }
+
+      // Process the picked image
+      final processedImage = await processPickedImage(pickedImage);
+
+      if (processedImage['imageFile'] == null) {
+        _errorController.add("Couldn't process image. Please try again.");
+        if (context != null) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        }
+        return false;
+      }
+
+      // Try to upload the image to Cloudinary with retry mechanism
+      String? imageUrl;
+      int retryCount = 0;
+      const maxRetries = 2;
+
+      while (imageUrl == null && retryCount <= maxRetries) {
+        try {
+          imageUrl = await uploadFeedImage(
+            imageFile: processedImage['imageFile'],
+            webImage: processedImage['webImage'],
+            context: context,
+          );
+
+          if (imageUrl == null && retryCount < maxRetries) {
+            retryCount++;
+            print('🔄 Retry attempt $retryCount for image upload');
+            // Wait a bit before retrying
+            await Future.delayed(Duration(seconds: 2));
+          }
+        } catch (e) {
+          print('❌ Upload attempt $retryCount failed: $e');
+          if (retryCount < maxRetries) {
+            retryCount++;
+            await Future.delayed(Duration(seconds: 2));
+          } else {
+            rethrow;
+          }
+        }
+      }
+
+      if (imageUrl == null) {
+        _errorController.add(
+            "Failed to upload image after several attempts. Please try again with a smaller image.");
+        if (context != null) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'Image upload failed. Try using a smaller image or check your network.'),
+              duration: Duration(seconds: 4),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return false;
+      }
+
+      // Create the post with the image URL
+      await addPost(
+        caption: caption,
+        imageUrl: imageUrl,
+        location: location,
+        context: context,
+      );
+
+      // Hide loading indicator and show success message
+      if (context != null) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Post created successfully!'),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.green),
+        );
+      }
+
+      return true;
+    } catch (e) {
+      print('❌ Error creating post with image: $e');
+
+      // Provide more detailed error messages based on the exception type
+      String errorMessage = "Couldn't create post. Please try again.";
+
+      if (e.toString().contains('network')) {
+        errorMessage = "Network error. Please check your internet connection.";
+      } else if (e.toString().contains('permission')) {
+        errorMessage = "Permission denied. Please check app permissions.";
+      } else if (e.toString().contains('storage') ||
+          e.toString().contains('quota')) {
+        errorMessage = "Storage error. Your image may be too large.";
+      }
+
+      _errorController.add(errorMessage);
+
+      // Hide loading indicator and show error
+      if (context != null) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 4),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
+      await _errorHandler.handleFirebaseException(e, context);
+      return false;
+    }
+  }
+
+  // Show a bottom sheet to choose between camera and gallery
+  Future<XFile?> showImageSourceSheet(BuildContext context) async {
+    XFile? pickedFile;
+
+    await showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading: Icon(Icons.photo_library),
+                title: Text('Photo Library'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  pickedFile = await pickImageFromSource(ImageSource.gallery,
+                      context: context);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.photo_camera),
+                title: Text('Camera'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  pickedFile = await pickImageFromSource(ImageSource.camera,
+                      context: context);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    return pickedFile;
+  }
+
+  // Get a single post by ID with real-time updates
+  Stream<Post> getPostById(String postId, {BuildContext? context}) {
+    try {
+      // Create a stream transformer to handle errors
+      StreamTransformer<DocumentSnapshot<Map<String, dynamic>>,
+              DocumentSnapshot<Map<String, dynamic>>> errorHandler =
+          StreamTransformer<DocumentSnapshot<Map<String, dynamic>>,
+              DocumentSnapshot<Map<String, dynamic>>>.fromHandlers(
+        handleError: (error, stackTrace, sink) async {
+          print('❌ Error in getPostById stream: $error');
+
+          // Try to recover from the error
+          bool recovered =
+              await _errorHandler.handleFirebaseException(error, context);
+
+          if (recovered) {
+            // If recovery was successful, notify about error but don't break the stream
+            _errorController.add(
+                "Post data temporarily unavailable. Attempting to reconnect...");
+          } else {
+            // If recovery failed, propagate the error
+            _errorController
+                .add("Unable to load post. Please try again later.");
+            sink.addError(error, stackTrace);
+          }
+        },
+      );
+
+      return _firestore
+          .collection('posts')
+          .doc(postId)
+          .snapshots()
+          .transform(errorHandler) // Apply the error handler
+          .map((snapshot) {
+        try {
+          if (!snapshot.exists) {
+            throw Exception("Post does not exist!");
+          }
+          return Post.fromFirestore(snapshot);
+        } catch (e) {
+          print('❌ Error parsing post: $e');
+          _errorController.add("Error loading post. Data might be corrupted.");
+          throw e;
+        }
+      });
+    } catch (e) {
+      print('❌ Fatal error setting up post stream: $e');
+      _errorController
+          .add("Critical error loading post. Please try again later.");
+
+      // Return an empty stream to avoid breaking the UI
+      return Stream.error(e);
     }
   }
 }

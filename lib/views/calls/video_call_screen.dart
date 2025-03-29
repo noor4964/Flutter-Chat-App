@@ -346,14 +346,12 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         ? widget.call.receiverPhotoUrl
         : widget.call.callerPhotoUrl;
 
-    return WillPopScope(
-      onWillPop: () async {
-        // Prevent accidental back navigation during call
-        if (_isCallConnected && !_isCallEnding) {
-          _endCall();
-          return false;
-        }
-        return true;
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        // Handle back button press
+        _showExitConfirmationDialog();
       },
       child: Scaffold(
         extendBodyBehindAppBar: true,
@@ -724,6 +722,34 @@ class _VideoCallScreenState extends State<VideoCallScreen>
           ),
         ),
       ],
+    );
+  }
+
+  // Show exit confirmation dialog
+  void _showExitConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Exit Call'),
+          content: const Text('Are you sure you want to exit the call?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                _endCall();
+                Navigator.of(context).pop();
+              },
+              child: const Text('Yes'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
