@@ -82,8 +82,23 @@ service cloud.firestore {
 
     // ✅ Stories Collection (Temporary Status Updates)
     match /stories/{storyId} {
-      allow read: if isAuthenticated() && request.auth.uid in resource.data.viewers;
-      allow create, delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
+      // All authenticated users can read stories
+      allow read: if isAuthenticated();
+      
+      // Only the story creator can create stories
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      
+      // Anyone can update stories to mark them as viewed (to add themselves to viewers array)
+      allow update: if isAuthenticated() && (
+        // Owner can update anything
+        request.resource.data.userId == request.auth.uid ||
+        // Non-owners can only update the viewers array
+        (resource.data.userId != request.auth.uid && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers']))
+      );
+      
+      // Only the owner can delete their stories
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     // ✅ Notifications Collection (Push Notifications)

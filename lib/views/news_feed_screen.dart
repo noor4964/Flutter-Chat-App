@@ -4,8 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io';
 import 'package:flutter_chat_app/models/post_model.dart';
+import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
-import 'package:flutter_chat_app/services/image_picker_helper.dart';
+import 'package:flutter_chat_app/services/story_service.dart';
+import 'package:flutter_chat_app/views/create_story_screen.dart';
+import 'package:flutter_chat_app/views/story_view_screen.dart';
 import 'package:flutter_chat_app/widgets/post_card.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,6 +25,7 @@ class NewsFeedScreen extends StatefulWidget {
 class _NewsFeedScreenState extends State<NewsFeedScreen>
     with AutomaticKeepAliveClientMixin {
   final FeedService _feedService = FeedService();
+  final StoryService _storyService = StoryService(); // Add story service
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
@@ -32,6 +36,7 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
 
   // Create a stream controller to help with error recovery
   Stream<List<Post>>? _postsStream;
+  Stream<List<Story>>? _storiesStream; // Add stories stream
 
   @override
   bool get wantKeepAlive => true;
@@ -48,6 +53,7 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
           _loadCurrentUserInfo();
           _setupErrorListener();
           _initializePostsStream();
+          _initializeStoriesStream(); // Initialize stories stream
         }
       });
     } catch (e) {
@@ -83,6 +89,14 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
     } catch (e) {
       print('❌ Error initializing posts stream: $e');
       _errorMessage = 'Could not load feed. Please try again.';
+    }
+  }
+
+  void _initializeStoriesStream() {
+    try {
+      _storiesStream = _storyService.getActiveStories(context: context);
+    } catch (e) {
+      print('❌ Error initializing stories stream: $e');
     }
   }
 
@@ -165,8 +179,9 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
         _isRecovering = true;
       });
 
-      // Reinitialize the posts stream
+      // Reinitialize the posts and stories streams
       _initializePostsStream();
+      _initializeStoriesStream();
 
       // Wait a moment for the recovery to take effect
       await Future.delayed(const Duration(milliseconds: 500));
@@ -650,82 +665,115 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
             ),
             SizedBox(
               height: 90,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                itemCount: 11, // Your story + 10 others
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    // Your story
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Column(
-                        children: [
-                          Stack(
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: Colors.grey[300]!,
-                                    width: 1,
-                                  ),
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                                child: CircleAvatar(
-                                  radius: 30,
-                                  backgroundColor: colorScheme.primaryContainer,
-                                  backgroundImage:
-                                      _currentUserProfileImageUrl != null
-                                          ? NetworkImage(
-                                              _currentUserProfileImageUrl!)
-                                          : null,
-                                  child: _currentUserProfileImageUrl == null
-                                      ? Icon(
-                                          Icons.person,
-                                          color: colorScheme.primary,
-                                        )
-                                      : null,
-                                ),
-                              ),
-                              Positioned(
-                                right: 0,
-                                bottom: 0,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: isDarkMode
-                                          ? colorScheme.surface
-                                          : Colors.white,
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    Icons.add,
-                                    color: Colors.white,
-                                    size: 16,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Your Story',
-                            style: TextStyle(
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+              child: _buildStoriesStreamBuilder(colorScheme, isDarkMode),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStoriesStreamBuilder(ColorScheme colorScheme, bool isDarkMode) {
+    if (_storiesStream == null) {
+      // If stream is not initialized, show loading
+      return ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        itemCount: 3, // Show fewer items in loading state
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            // Your story item (always shown)
+            return GestureDetector(
+              onTap: _navigateToCreateStory,
+              child: _buildYourStoryItem(colorScheme, isDarkMode),
+            );
+          } else {
+            // Loading placeholders
+            return Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 30,
+                    backgroundColor: Colors.grey[300],
+                    child: SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          colorScheme.primary.withOpacity(0.7),
+                        ),
                       ),
-                    );
-                  }
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    height: 12,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        },
+      );
+    }
 
-                  // Other stories with example data
-                  bool hasUnseenStory = index % 3 == 0;
+    return StreamBuilder<List<Story>>(
+      stream: _storiesStream,
+      builder: (context, snapshot) {
+        // Get current user ID to find own stories
+        final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+        List<Story> stories = snapshot.data ?? [];
 
-                  return Padding(
+        // Group stories by user
+        Map<String, List<Story>> groupedStories =
+            _storyService.groupStoriesByUser(stories);
+
+        // Extract unique users who have stories
+        List<String> userIds = groupedStories.keys.toList();
+
+        // Total count is your story + all other users with stories
+        int totalCount = userIds.length + 1;
+
+        return ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          itemCount: totalCount,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              // Your story is always first
+              return GestureDetector(
+                onTap: _navigateToCreateStory,
+                child: _buildYourStoryItem(colorScheme, isDarkMode),
+              );
+            } else {
+              // Other users' stories
+              final int userIndex = index - 1;
+              if (userIndex < userIds.length) {
+                final String userId = userIds[userIndex];
+                final List<Story> userStories = groupedStories[userId] ?? [];
+
+                if (userStories.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+
+                // Get first story to display user info
+                final Story firstStory = userStories.first;
+                final bool hasUnseenStory = currentUserId != null &&
+                    !userStories.any((story) => story.isViewed(currentUserId));
+
+                return GestureDetector(
+                  onTap: () {
+                    // Navigate to story view using the new helper method
+                    _navigateToStoryView(userStories, userId, 0);
+                  },
+                  child: Padding(
                     padding: const EdgeInsets.only(right: 12),
                     child: Column(
                       children: [
@@ -764,38 +812,132 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
                             ),
                             child: CircleAvatar(
                               radius: 28,
-                              backgroundColor: hasUnseenStory
-                                  ? colorScheme.primaryContainer
-                                  : Colors.grey[300],
-                              child: Text(
-                                'U${index}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: hasUnseenStory
-                                      ? colorScheme.primary
-                                      : Colors.grey[700],
-                                ),
-                              ),
+                              backgroundColor: colorScheme.primaryContainer,
+                              backgroundImage: firstStory
+                                      .userProfileImage.isNotEmpty
+                                  ? NetworkImage(firstStory.userProfileImage)
+                                  : null,
+                              child: firstStory.userProfileImage.isEmpty
+                                  ? Text(
+                                      firstStory.username.isNotEmpty
+                                          ? firstStory.username[0].toUpperCase()
+                                          : '?',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: colorScheme.primary,
+                                      ),
+                                    )
+                                  : null,
                             ),
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'User $index',
+                          _truncateUsername(firstStory.username),
                           style: const TextStyle(
                             fontSize: 12,
                           ),
                         ),
                       ],
                     ),
-                  );
-                },
+                  ),
+                );
+              } else {
+                return const SizedBox.shrink();
+              }
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildYourStoryItem(ColorScheme colorScheme, bool isDarkMode) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: Column(
+        children: [
+          Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Colors.grey[300]!,
+                    width: 1,
+                  ),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: CircleAvatar(
+                  radius: 30,
+                  backgroundColor: colorScheme.primaryContainer,
+                  backgroundImage: _currentUserProfileImageUrl != null
+                      ? NetworkImage(_currentUserProfileImageUrl!)
+                      : null,
+                  child: _currentUserProfileImageUrl == null
+                      ? Icon(
+                          Icons.person,
+                          color: colorScheme.primary,
+                        )
+                      : null,
+                ),
               ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.blue,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isDarkMode ? colorScheme.surface : Colors.white,
+                      width: 2,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.add,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Your Story',
+            style: TextStyle(
+              fontSize: 12,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  // Helper to truncate long usernames
+  String _truncateUsername(String username) {
+    return username.length > 9 ? '${username.substring(0, 8)}...' : username;
+  }
+
+  void _navigateToStoryView(
+      List<Story> stories, String userId, int initialIndex) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StoryViewScreen(
+          stories: stories,
+          userId: userId,
+          initialIndex: initialIndex,
+        ),
+      ),
+    ).then((_) {
+      // Refresh the stories list when returning
+      if (mounted) {
+        setState(() {
+          _initializeStoriesStream();
+        });
+      }
+    });
   }
 
   void _showCreatePostDialog() {
@@ -1185,5 +1327,23 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
         ),
       ),
     );
+  }
+
+  void _navigateToCreateStory() async {
+    // Provide haptic feedback for better user experience
+    HapticFeedback.mediumImpact();
+
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const CreateStoryScreen(),
+      ),
+    );
+
+    // If a story was created, refresh the stories list
+    if (result == true && mounted) {
+      setState(() {
+        _initializeStoriesStream();
+      });
+    }
   }
 }

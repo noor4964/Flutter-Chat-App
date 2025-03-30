@@ -21,6 +21,8 @@ class CloudinaryService {
       'ml_default'; // Using Cloudinary's default preset
   static const String feedPostPreset =
       'ml_default'; // Using Cloudinary's default preset
+  static const String storyMediaPreset =
+      'ml_default'; // Using Cloudinary's default preset for stories
 
   /// Upload an image to Cloudinary and return the download URL
   ///

@@ -6,9 +6,14 @@ import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'package:flutter_chat_app/views/news_feed_screen.dart';
+import 'package:flutter_chat_app/views/post/post_create_screen.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/widgets/error_boundary.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_chat_app/views/create_story_screen.dart';
+import 'package:flutter_chat_app/views/story_view_screen.dart';
+import 'package:flutter_chat_app/models/story_model.dart';
+import 'package:flutter_chat_app/services/story_service.dart';
 
 class MessengerHomeScreen extends StatefulWidget {
   final bool isDesktop;
@@ -164,8 +169,50 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
                     // Start new chat
                     _safeNavigate(context, UserListScreen());
                   } else if (_currentIndex == 1) {
-                    // Create new post
-                    // This will be handled by the NewsFeedScreen's own FAB
+                    // Create new post - use the PostCreateScreen
+                    final currentPage = _pageController.page?.round() ?? 0;
+                    if (currentPage == 1) {
+                      // We're already on the feed page
+                      Navigator.of(context).push(
+                        PageRouteBuilder(
+                          opaque: false,
+                          pageBuilder: (BuildContext context, _, __) {
+                            return PostCreateScreen();
+                          },
+                        ),
+                      );
+                    } else {
+                      // Navigate to feed page first
+                      _pageController.jumpToPage(1);
+                      Future.delayed(Duration(milliseconds: 300), () {
+                        Navigator.of(context).push(
+                          PageRouteBuilder(
+                            opaque: false,
+                            pageBuilder: (BuildContext context, _, __) {
+                              return PostCreateScreen();
+                            },
+                          ),
+                        );
+                      });
+                    }
+                  } else if (_currentIndex == 2) {
+                    // Create new story - navigate to CreateStoryScreen
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreateStoryScreen(),
+                      ),
+                    ).then((result) {
+                      // Refresh data when returning from story creation
+                      if (result == true) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Story created successfully!'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    });
                   }
                 } catch (e) {
                   print('❌ Error in FAB action: $e');
@@ -179,19 +226,28 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               },
               child: Icon(_currentIndex == 0
                   ? Icons.create
-                  : Icons.add_photo_alternate),
+                  : _currentIndex == 1
+                      ? Icons.add_photo_alternate
+                      : _currentIndex == 2
+                          ? Icons.add_circle_outline
+                          : Icons.add),
               tooltip: _currentIndex == 0
                   ? 'Start a new conversation'
-                  : 'Create post',
+                  : _currentIndex == 1
+                      ? 'Create post'
+                      : _currentIndex == 2
+                          ? 'Create story'
+                          : 'Add new',
             )
           : null,
     );
   }
 
   bool _shouldShowFab() {
-    // Only show FAB on Chats tab on desktop/tablet
-    // Feed tab has its own FAB
-    return (_currentIndex == 0 && MediaQuery.of(context).size.width >= 768);
+    // Show FAB on Chats tab (desktop/tablet only), Feed tab, and Stories tab
+    return (_currentIndex == 0 && MediaQuery.of(context).size.width >= 768) ||
+        (_currentIndex == 1) ||
+        (_currentIndex == 2);
   }
 
   // Chats Section - Show existing chat list
@@ -206,6 +262,7 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   Widget _buildStoriesSection() {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final storyService = StoryService();
 
     return SafeArea(
       child: Column(
@@ -227,11 +284,24 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
                 IconButton(
                   icon: const Icon(Icons.add),
                   onPressed: () {
-                    // Add story functionality
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Create a story coming soon!')),
-                    );
+                    // Navigate to CreateStoryScreen
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreateStoryScreen(),
+                      ),
+                    ).then((result) {
+                      // Refresh data when returning from story creation
+                      if (result == true) {
+                        setState(() {}); // Refresh the list
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Story created successfully!'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    });
                   },
                   tooltip: 'Add to story',
                 ),
@@ -242,78 +312,100 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
           // Your Story Card
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundColor: colorScheme.primaryContainer,
-                          backgroundImage: _getUserProfileImage(),
-                          child: _getUserProfileImage() == null
-                              ? Text(
-                                  _getUserInitials(),
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: colorScheme.primary,
-                                  ),
-                                )
-                              : null,
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: colorScheme.primary,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: theme.scaffoldBackgroundColor,
-                                width: 2,
-                              ),
-                            ),
-                            padding: const EdgeInsets.all(4),
-                            child: const Icon(
-                              Icons.add,
-                              size: 16,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+            child: GestureDetector(
+              onTap: () {
+                // Navigate to CreateStoryScreen when the card is tapped
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CreateStoryScreen(),
+                  ),
+                ).then((result) {
+                  // Refresh data when returning from story creation
+                  if (result == true) {
+                    setState(() {}); // Refresh the list
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Story created successfully!'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                });
+              },
+              child: Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      Stack(
                         children: [
-                          const Text(
-                            'Add to your story',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: colorScheme.primaryContainer,
+                            backgroundImage: _getUserProfileImage(),
+                            child: _getUserProfileImage() == null
+                                ? Text(
+                                    _getUserInitials(),
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary,
+                                    ),
+                                  )
+                                : null,
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Share a photo, video or write something',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: theme.scaffoldBackgroundColor,
+                                  width: 2,
+                                ),
+                              ),
+                              padding: const EdgeInsets.all(4),
+                              child: const Icon(
+                                Icons.add,
+                                size: 16,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Add to your story',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Share a photo, video or write something',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -321,99 +413,193 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
 
           const SizedBox(height: 16),
 
-          // Stories list
+          // Real stories list fetched from database
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              itemCount: 10, // Mock stories count
-              itemBuilder: (context, index) {
-                // Demo data - in a real app, you'd fetch this from your database
-                final bool hasUnseenStory = index % 3 == 0;
-                final String name = "User ${index + 1}";
-                final String time = "${(index % 12) + 1}h ago";
+            child: StreamBuilder<List<Story>>(
+              stream: storyService.getActiveStories(context: context),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: InkWell(
-                    onTap: () {
-                      // View story
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Viewing $name\'s story')),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Row(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: hasUnseenStory
-                                  ? Border.all(
-                                      color: colorScheme.primary,
-                                      width: 2,
-                                    )
-                                  : null,
-                            ),
-                            child: CircleAvatar(
-                              radius: 26,
-                              backgroundColor: hasUnseenStory
-                                  ? colorScheme.primaryContainer
-                                  : Colors.grey.withOpacity(0.2),
-                              child: Text(
-                                name.substring(0, 1).toUpperCase(),
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: hasUnseenStory
-                                      ? colorScheme.primary
-                                      : Colors.grey[700],
-                                ),
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline,
+                            size: 48, color: Colors.orange),
+                        const SizedBox(height: 16),
+                        Text('Error loading stories: ${snapshot.error}'),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: () => setState(() {}),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                final List<Story> stories = snapshot.data ?? [];
+
+                if (stories.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.auto_stories_outlined,
+                          size: 64,
+                          color: colorScheme.primary.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'No stories yet',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Stories from your contacts will appear here',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                // Group stories by user
+                final Map<String, List<Story>> groupedStories =
+                    storyService.groupStoriesByUser(stories);
+                final List<String> userIds = groupedStories.keys.toList();
+                final String? currentUserId =
+                    FirebaseAuth.instance.currentUser?.uid;
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  itemCount: userIds.length,
+                  itemBuilder: (context, index) {
+                    final String userId = userIds[index];
+                    final List<Story> userStories =
+                        groupedStories[userId] ?? [];
+
+                    if (userStories.isEmpty) return const SizedBox.shrink();
+
+                    // Get the first story to display user info
+                    final Story firstStory = userStories.first;
+                    final bool hasUnseenStory = currentUserId != null &&
+                        !userStories
+                            .any((story) => story.isViewed(currentUserId));
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: InkWell(
+                        onTap: () {
+                          // View story - open StoryViewScreen
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => StoryViewScreen(
+                                stories: userStories,
+                                userId: userId,
+                                initialIndex: 0,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  name,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: hasUnseenStory
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                  ),
+                          ).then((_) {
+                            // Refresh the list when returning
+                            setState(() {});
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Row(
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: hasUnseenStory
+                                      ? Border.all(
+                                          color: colorScheme.primary,
+                                          width: 2,
+                                        )
+                                      : null,
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  time,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
-                                  ),
+                                child: CircleAvatar(
+                                  radius: 26,
+                                  backgroundColor: hasUnseenStory
+                                      ? colorScheme.primaryContainer
+                                      : Colors.grey.withOpacity(0.2),
+                                  backgroundImage:
+                                      firstStory.userProfileImage.isNotEmpty
+                                          ? NetworkImage(
+                                              firstStory.userProfileImage)
+                                          : null,
+                                  child: firstStory.userProfileImage.isEmpty
+                                      ? Text(
+                                          firstStory.username.isNotEmpty
+                                              ? firstStory.username[0]
+                                                  .toUpperCase()
+                                              : '?',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: hasUnseenStory
+                                                ? colorScheme.primary
+                                                : Colors.grey[700],
+                                          ),
+                                        )
+                                      : null,
                                 ),
-                              ],
-                            ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      firstStory.username,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: hasUnseenStory
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _getTimeAgo(firstStory.timestamp),
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.more_horiz,
+                                  color: Colors.grey[600],
+                                ),
+                                onPressed: () {
+                                  _showStoryOptions(firstStory, userStories);
+                                },
+                              ),
+                            ],
                           ),
-                          IconButton(
-                            icon: Icon(
-                              Icons.more_horiz,
-                              color: Colors.grey[600],
-                            ),
-                            onPressed: () {
-                              // More options for this story
-                            },
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
@@ -423,240 +609,148 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     );
   }
 
-  // Menu Section
-  Widget _buildMenuSection() {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final currentUser = FirebaseAuth.instance.currentUser;
+  // Display time ago for stories
+  String _getTimeAgo(DateTime dateTime) {
+    final Duration difference = DateTime.now().difference(dateTime);
 
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16.0),
-        children: [
-          // Header with title
-          Text(
-            'Menu',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onBackground,
-            ),
-          ),
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${difference.inDays}d ago';
+    }
+  }
 
-          const SizedBox(height: 16),
+  // Show story options
+  void _showStoryOptions(Story story, List<Story> allUserStories) {
+    final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final bool isOwnStory = story.userId == currentUserId;
 
-          // User profile card
-          Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: InkWell(
-              onTap: () async {
-                // Navigate to profile screen and refresh profile image when returning
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ProfileScreen()),
-                );
-                // Refresh profile image when returning from profile screen
-                _loadUserProfileData();
-              },
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 36,
-                      backgroundColor: colorScheme.primaryContainer,
-                      backgroundImage: _getUserProfileImage(),
-                      child: _getUserProfileImage() == null
-                          ? Text(
-                              _getUserInitials(),
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: colorScheme.primary,
-                              ),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _username ??
-                                currentUser?.displayName ??
-                                'Chat User',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            currentUser?.email ?? '',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'View your profile',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: colorScheme.primary,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle for the bottom sheet
+              Container(
+                height: 4,
+                width: 40,
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            ),
-          ),
 
-          const SizedBox(height: 24),
+              ListTile(
+                leading: const Icon(Icons.remove_red_eye_outlined),
+                title: const Text('View story'),
+                onTap: () {
+                  Navigator.pop(context);
+                  // Navigate directly to StoryViewScreen without unnecessary complexity
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => StoryViewScreen(
+                        stories: allUserStories,
+                        userId: story.userId,
+                        initialIndex: allUserStories.indexOf(story),
+                      ),
+                    ),
+                  ).then((_) {
+                    // Refresh the list when returning
+                    setState(() {});
+                  });
+                },
+              ),
 
-          // Menu sections
-          _buildMenuSectionHeader('General', [
-            _buildMenuItem(
-              icon: Icons.person_add,
-              title: 'New Contact',
-              onTap: () {
-                try {
-                  _safeNavigate(context, UserListScreen());
-                } catch (e) {
-                  print('❌ Error navigating to UserListScreen: $e');
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text(
-                              'Could not open contacts. Please try again.')),
-                    );
-                  }
-                }
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.notifications,
-              title: 'Pending Requests',
-              onTap: () {
-                try {
-                  _safeNavigate(context, PendingRequestsScreen());
-                } catch (e) {
-                  print('❌ Error navigating to PendingRequestsScreen: $e');
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text(
-                              'Could not open requests. Please try again.')),
-                    );
-                  }
-                }
-              },
-              badge: '3', // Example badge number - would be dynamic in real app
-            ),
-          ]),
+              if (isOwnStory) ...[
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Delete story'),
+                  onTap: () async {
+                    Navigator.pop(context);
 
-          const SizedBox(height: 16),
-
-          _buildMenuSectionHeader('Preferences', [
-            _buildMenuItem(
-              icon: Icons.settings,
-              title: 'Settings',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => SettingsScreen()),
-                );
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.help_outline,
-              title: 'Help & Support',
-              onTap: () {
-                // Open help page
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Help & Support coming soon!')),
-                );
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          _buildMenuSectionHeader('Account', [
-            _buildMenuItem(
-              icon: Icons.logout,
-              title: 'Sign Out',
-              onTap: () async {
-                // Logout confirmation dialog
-                try {
-                  bool confirm = await showDialog(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Sign Out'),
-                          content:
-                              const Text('Are you sure you want to sign out?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(false),
-                              child: const Text('Cancel'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.of(context).pop(true),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
+                    // Show confirmation dialog
+                    final bool confirm = await showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Delete Story'),
+                            content: const Text(
+                                'Are you sure you want to delete this story?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Cancel'),
                               ),
-                              child: const Text('Sign Out'),
-                            ),
-                          ],
-                        ),
-                      ) ??
-                      false;
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text(
+                                  'Delete',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
 
-                  if (!confirm) return;
+                    if (confirm) {
+                      try {
+                        final storyService = StoryService();
+                        await storyService.deleteStory(story.id,
+                            context: context);
 
-                  try {
-                    await FirebaseAuth.instance.signOut();
-                  } catch (e) {
-                    print('❌ Error during sign out: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Story deleted'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
 
-                    // Let the error handler deal with Firebase errors
-                    await _errorHandler.handleFirebaseException(e, context);
-
-                    if (_isMounted && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                            content:
-                                Text('Could not sign out. Please try again.')),
-                      );
+                        // Refresh the list
+                        setState(() {});
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Failed to delete story: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
                     }
-                  }
-                } catch (dialogError) {
-                  // Handle any errors that might occur with the dialog
-                  print('❌ Error showing sign out dialog: $dialogError');
-
-                  if (_isMounted && mounted) {
+                  },
+                ),
+              ] else ...[
+                ListTile(
+                  leading: const Icon(Icons.report_outlined),
+                  title: const Text('Report story'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    // Report story functionality
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                          content:
-                              Text('An error occurred. Please try again.')),
+                          content: Text('Report functionality coming soon')),
                     );
-                  }
-                }
-              },
-              textColor: Colors.red,
-              iconColor: Colors.red,
-            ),
-          ]),
-        ],
+                  },
+                ),
+              ],
+
+              // Add some padding at the bottom
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -813,5 +907,226 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   // Build a proper error boundary widget
   Widget _buildErrorSafeScreen(Widget screen) {
     return ErrorBoundary(child: screen);
+  }
+
+  // Menu Section - User profile and app settings
+  Widget _buildMenuSection() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final user = FirebaseAuth.instance.currentUser;
+
+    return SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.all(16.0),
+        children: [
+          // Profile header with user info
+          Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 32,
+                    backgroundColor: colorScheme.primaryContainer,
+                    backgroundImage: _getUserProfileImage(),
+                    child: _getUserProfileImage() == null
+                        ? Text(
+                            _getUserInitials(),
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _username ?? user?.displayName ?? 'User',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          user?.email ?? '',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () {
+                      // Navigate to profile screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ProfileScreen()),
+                      ).then((_) {
+                        // Refresh user data when returning from profile screen
+                        _loadUserProfileData();
+                      });
+                    },
+                    tooltip: 'Edit profile',
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Account section
+          _buildMenuSectionHeader('Account', [
+            _buildMenuItem(
+              icon: Icons.person_outline,
+              title: 'Profile',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => ProfileScreen()),
+                ).then((_) {
+                  // Refresh user data when returning from profile screen
+                  _loadUserProfileData();
+                });
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.people_outline,
+              title: 'Friend Requests',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => PendingRequestsScreen()),
+                );
+              },
+              badge: '2', // This could be dynamic based on actual request count
+            ),
+          ]),
+
+          const SizedBox(height: 16),
+
+          // Settings section
+          _buildMenuSectionHeader('Preferences', [
+            _buildMenuItem(
+              icon: Icons.settings_outlined,
+              title: 'Settings',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => SettingsScreen()),
+                );
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.dark_mode_outlined,
+              title: 'Dark Mode',
+              onTap: () {
+                // Toggle dark mode functionality would go here
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Dark mode toggle coming soon')),
+                );
+              },
+            ),
+          ]),
+
+          const SizedBox(height: 16),
+
+          // Help & feedback section
+          _buildMenuSectionHeader('Help & Feedback', [
+            _buildMenuItem(
+              icon: Icons.help_outline,
+              title: 'Help Center',
+              onTap: () {
+                // Navigate to help center or open web link
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Help center coming soon')),
+                );
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.feedback_outlined,
+              title: 'Send Feedback',
+              onTap: () {
+                // Open feedback form
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Feedback form coming soon')),
+                );
+              },
+            ),
+          ]),
+
+          const SizedBox(height: 16),
+
+          // Logout section
+          _buildMenuSectionHeader('Session', [
+            _buildMenuItem(
+              icon: Icons.logout,
+              title: 'Log Out',
+              onTap: () async {
+                // Show confirmation dialog
+                final bool confirm = await showDialog(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Log Out'),
+                        content:
+                            const Text('Are you sure you want to log out?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('Log Out'),
+                          ),
+                        ],
+                      ),
+                    ) ??
+                    false;
+
+                if (confirm) {
+                  try {
+                    await FirebaseAuth.instance.signOut();
+                    // Navigate to login screen or restart app
+                  } catch (e) {
+                    print('❌ Error signing out: $e');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to log out: $e')),
+                    );
+                  }
+                }
+              },
+              iconColor: Colors.red,
+              textColor: Colors.red,
+            ),
+          ]),
+
+          // Version info
+          const SizedBox(height: 24),
+          Center(
+            child: Text(
+              'App version 1.0.0',
+              style: TextStyle(
+                color: Colors.grey,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
