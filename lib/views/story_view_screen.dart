@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
@@ -256,12 +257,43 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            Text(
-                              _getTimeAgo(story.timestamp),
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                                fontSize: 12,
-                              ),
+                            Row(
+                              children: [
+                                Text(
+                                  _getTimeAgo(story.timestamp),
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.8),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                // Show location if available
+                                if (story.location != null &&
+                                    story.location!.isNotEmpty)
+                                  Row(
+                                    children: [
+                                      Text(
+                                        ' • ',
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.8),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.location_on,
+                                        size: 12,
+                                        color: Colors.white.withOpacity(0.8),
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        story.location!,
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.8),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
                             ),
                           ],
                         ),
@@ -275,7 +307,7 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                   ),
                 ),
 
-                // Caption at the bottom
+                // Caption at the bottom with mentions highlighted
                 if (story.caption.isNotEmpty)
                   Positioned(
                     bottom: MediaQuery.of(context).padding.bottom + 20,
@@ -287,12 +319,70 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                         color: Colors.black.withOpacity(0.4),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Text(
-                        story.caption,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            story.caption,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                            ),
+                          ),
+
+                          // Display mentions if available
+                          if (story.mentions.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.people,
+                                    size: 14,
+                                    color: Colors.white.withOpacity(0.8),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      'With ${_formatMentions(story.mentions)}',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.8),
+                                        fontSize: 12,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                          // Display music info if available
+                          if (story.musicInfo != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    size: 14,
+                                    color: Colors.white.withOpacity(0.8),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      '${story.musicInfo!['artist'] ?? 'Unknown'} - ${story.musicInfo!['title'] ?? 'Unknown'}',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.8),
+                                        fontSize: 12,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -303,18 +393,30 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                   right: 10,
                   child: Column(
                     children: [
-                      // Only show reply option if not the current user's story
-                      if (story.userId != _currentUserId)
+                      // Only show reply and reaction options if not the current user's story
+                      if (story.userId != _currentUserId) ...[
+                        // Reaction button
+                        _buildStoryAction(
+                          icon: Icons.favorite_border,
+                          label: "React",
+                          onTap: () {
+                            _showReactionPicker(story);
+                          },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Reply button
                         _buildStoryAction(
                           icon: Icons.send_outlined,
                           label: "Reply",
                           onTap: () {
-                            // Reply to story functionality
                             _showReplyDialog(story);
                           },
                         ),
-                      const SizedBox(height: 16),
-                      // More actions (like, share, etc.)
+                        const SizedBox(height: 16),
+                      ],
+
+                      // More options (accessible by all)
                       _buildStoryAction(
                         icon: Icons.more_horiz,
                         label: "More",
@@ -325,6 +427,51 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                     ],
                   ),
                 ),
+
+                // Display number of views for owner
+                if (story.userId == _currentUserId)
+                  Positioned(
+                    bottom: MediaQuery.of(context).padding.bottom + 20,
+                    left: 10,
+                    child: GestureDetector(
+                      onTap: () => _showViewersList(story),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.remove_red_eye,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${story.viewers.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                // Display reactions on a story
+                if (story.reactions.isNotEmpty)
+                  Positioned(
+                    bottom: MediaQuery.of(context).padding.bottom + 100,
+                    left: 10,
+                    child: _buildReactionsDisplay(story),
+                  ),
               ],
             );
           },
@@ -492,21 +639,48 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    onPressed: () {
+                    onPressed: () async {
                       final String reply = replyController.text.trim();
                       if (reply.isNotEmpty) {
-                        // Here we would implement the reply functionality
-                        // For now, just show a snackbar
+                        Navigator.pop(context);
+
+                        // Show loading indicator
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Reply sent to ${story.username}',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            backgroundColor: Colors.green,
+                          const SnackBar(
+                            content: Text('Sending reply...'),
+                            duration: Duration(seconds: 1),
                           ),
                         );
-                        Navigator.pop(context);
+
+                        try {
+                          // Actually send the reply using the StoryService
+                          await _storyService.replyToStory(
+                            story.id,
+                            reply,
+                            context: context,
+                          );
+
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Reply sent to ${story.username}',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to send reply: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -695,6 +869,345 @@ class _StoryViewScreenState extends State<StoryViewScreen>
       return '${difference.inHours}h ago';
     } else {
       return '${difference.inDays}d ago';
+    }
+  }
+
+  // New method to show emoji reactions
+  void _showReactionPicker(Story story) {
+    final List<String> commonEmojis = [
+      '❤️',
+      '😂',
+      '😮',
+      '😢',
+      '😡',
+      '👍',
+      '🔥',
+      '🎉'
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle for the bottom sheet
+              Container(
+                height: 4,
+                width: 40,
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Text(
+                  "React to Story",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+
+              // Emoji grid
+              GridView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(16),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  childAspectRatio: 1,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                ),
+                itemCount: commonEmojis.length,
+                itemBuilder: (context, index) {
+                  return InkWell(
+                    onTap: () async {
+                      Navigator.pop(context);
+                      try {
+                        // Send the reaction
+                        await _storyService.reactToStory(
+                          story.id,
+                          commonEmojis[index],
+                          context: context,
+                        );
+
+                        // Show confirmation
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content:
+                                  Text('Reaction sent: ${commonEmojis[index]}'),
+                              duration: const Duration(seconds: 1),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to send reaction: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                      ),
+                      child: Center(
+                        child: Text(
+                          commonEmojis[index],
+                          style: const TextStyle(fontSize: 24),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatMentions(List<String> mentions) {
+    if (mentions.isEmpty) return '';
+
+    if (mentions.length <= 2) {
+      return mentions.map((mention) => '@$mention').join(', ');
+    } else {
+      return '${mentions.take(2).map((mention) => '@$mention').join(', ')} and ${mentions.length - 2} others';
+    }
+  }
+
+  // Display reactions on a story
+  Widget _buildReactionsDisplay(Story story) {
+    // If no reactions, return empty container
+    if (story.reactions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Group reactions by emoji
+    Map<String, int> reactionCounts = {};
+    for (var reaction in story.reactions) {
+      String emoji = reaction['emoji'] as String;
+      reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ...reactionCounts.entries.take(3).map(
+                (entry) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    "${entry.key}${entry.value > 1 ? entry.value : ''}",
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+          if (reactionCounts.length > 3)
+            Text(
+              "+${reactionCounts.length - 3}",
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.8),
+                fontSize: 12,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showViewersList(Story story) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Column(
+          children: [
+            // Handle for the bottom sheet
+            Container(
+              height: 4,
+              width: 40,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  Text(
+                    "Viewers (${story.viewers.length})",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(),
+            // List of viewers
+            Expanded(
+              child: story.viewers.isEmpty
+                  ? const Center(
+                      child: Text("No viewers yet"),
+                    )
+                  : FutureBuilder<List<Map<String, dynamic>>>(
+                      future: _fetchViewersData(story.viewers),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: Text(
+                                "Error loading viewers: ${snapshot.error}"),
+                          );
+                        }
+
+                        final viewersData = snapshot.data ?? [];
+
+                        if (viewersData.isEmpty) {
+                          return const Center(
+                            child: Text("No viewer information available"),
+                          );
+                        }
+
+                        return ListView.builder(
+                          itemCount: viewersData.length,
+                          itemBuilder: (context, index) {
+                            final userData = viewersData[index];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundImage: userData['profileImageUrl'] !=
+                                            null &&
+                                        userData['profileImageUrl'].isNotEmpty
+                                    ? NetworkImage(userData['profileImageUrl'])
+                                    : null,
+                                child: userData['profileImageUrl'] == null ||
+                                        userData['profileImageUrl'].isEmpty
+                                    ? Text(
+                                        userData['username'] != null &&
+                                                userData['username'].isNotEmpty
+                                            ? userData['username'][0]
+                                                .toUpperCase()
+                                            : '?',
+                                      )
+                                    : null,
+                              ),
+                              title:
+                                  Text(userData['username'] ?? 'Unknown User'),
+                              subtitle: Text(
+                                  'Viewed ${_getTimeAgo(userData['viewedAt'] ?? DateTime.now())}'),
+                            );
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Method to fetch viewer data from Firebase
+  Future<List<Map<String, dynamic>>> _fetchViewersData(
+      List<String> viewerIds) async {
+    List<Map<String, dynamic>> viewersData = [];
+
+    try {
+      // Get Firestore instance
+      final firestore = FirebaseFirestore.instance;
+
+      // Fetch data for each viewer
+      for (String viewerId in viewerIds) {
+        try {
+          // Get the user document
+          final userDoc =
+              await firestore.collection('users').doc(viewerId).get();
+
+          if (userDoc.exists) {
+            final userData = userDoc.data() as Map<String, dynamic>;
+            // Add the user data to our list with the time they viewed the story
+            viewersData.add({
+              'userId': viewerId,
+              'username': userData['username'] ?? 'Unknown',
+              'profileImageUrl': userData['profileImageUrl'] ?? '',
+              'viewedAt': DateTime
+                  .now(), // Ideally, this would be stored in the viewers array
+            });
+          } else {
+            // User not found, add placeholder
+            viewersData.add({
+              'userId': viewerId,
+              'username': 'Unknown User',
+              'profileImageUrl': '',
+              'viewedAt': DateTime.now(),
+            });
+          }
+        } catch (e) {
+          print('❌ Error fetching data for viewer $viewerId: $e');
+          // Add error placeholder
+          viewersData.add({
+            'userId': viewerId,
+            'username': 'User',
+            'profileImageUrl': '',
+            'viewedAt': DateTime.now(),
+          });
+        }
+      }
+
+      // Sort by most recent viewers first (ideally would use actual view timestamps)
+      viewersData.sort((a, b) =>
+          (b['viewedAt'] as DateTime).compareTo(a['viewedAt'] as DateTime));
+
+      return viewersData;
+    } catch (e) {
+      print('❌ Error fetching viewers data: $e');
+      return [];
     }
   }
 }

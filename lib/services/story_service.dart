@@ -9,12 +9,28 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/services/cloudinary_service.dart';
+import 'package:video_player/video_player.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
+import 'package:http/http.dart' as http;
 
 class StoryService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   final ImagePicker _picker = ImagePicker();
+
+  // Available filters for stories
+  static const Map<String, Map<String, dynamic>> filters = {
+    'none': {'name': 'Normal', 'description': 'No filter'},
+    'vintage': {'name': 'Vintage', 'description': 'Old school classic look'},
+    'monochrome': {'name': 'Monochrome', 'description': 'Black and white'},
+    'sepia': {'name': 'Sepia', 'description': 'Warm brown tones'},
+    'vivid': {'name': 'Vivid', 'description': 'Enhanced colors and contrast'},
+    'dramatic': {'name': 'Dramatic', 'description': 'High contrast moody look'},
+    'cool': {'name': 'Cool', 'description': 'Blue toned filter'},
+    'warm': {'name': 'Warm', 'description': 'Golden warm tones'},
+  };
 
   // Get current user ID
   String? get currentUserId => _auth.currentUser?.uid;
@@ -78,6 +94,54 @@ class StoryService {
     }
   }
 
+  // Get stories from users the current user follows
+  Stream<List<Story>> getFollowedUsersStories({BuildContext? context}) async* {
+    if (currentUserId == null) {
+      yield [];
+      return;
+    }
+
+    try {
+      // Get the list of users the current user follows
+      final followingDoc = await _firestore
+          .collection('users')
+          .doc(currentUserId)
+          .collection('following')
+          .get();
+
+      final List<String> followingIds =
+          followingDoc.docs.map((doc) => doc.id).toList();
+
+      // Add current user to see their own stories
+      followingIds.add(currentUserId!);
+
+      if (followingIds.isEmpty) {
+        yield [];
+        return;
+      }
+
+      // Get stories from followed users
+      yield* _firestore
+          .collection('stories')
+          .where('userId', whereIn: followingIds)
+          .where('expiryTime',
+              isGreaterThan: Timestamp.fromDate(DateTime.now()))
+          .orderBy('expiryTime', descending: false)
+          .snapshots()
+          .map((snapshot) {
+        try {
+          return snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+        } catch (e) {
+          print('❌ Error parsing followed users stories: $e');
+          return <Story>[];
+        }
+      });
+    } catch (e) {
+      print('❌ Error getting followed users stories: $e');
+      yield [];
+    }
+  }
+
   // Get stories for a specific user
   Stream<List<Story>> getUserStories(String userId, {BuildContext? context}) {
     try {
@@ -128,12 +192,37 @@ class StoryService {
     }
   }
 
-  // Create a new story
+  // Get user stories as a Future instead of Stream (useful for one-time checks)
+  Future<List<Story>> getUserStoriesFuture(String userId,
+      {BuildContext? context}) async {
+    try {
+      final snapshot = await _firestore
+          .collection('stories')
+          .where('userId', isEqualTo: userId)
+          .where('expiryTime',
+              isGreaterThan: Timestamp.fromDate(DateTime.now()))
+          .orderBy('expiryTime', descending: true)
+          .get();
+
+      return snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+    } catch (e) {
+      print('❌ Error getting user stories future: $e');
+      await _errorHandler.handleFirebaseException(e, context);
+      return [];
+    }
+  }
+
+  // Create a new story with advanced options
   Future<void> addStory({
     required String mediaUrl,
     String caption = '',
     String background = '',
     String mediaType = 'image',
+    Map<String, dynamic>? musicInfo,
+    List<String> mentions = const [],
+    String? location,
+    String? filter,
+    bool allowSharing = true,
     BuildContext? context,
   }) async {
     if (currentUserId == null) return;
@@ -160,6 +249,13 @@ class StoryService {
         background: background,
         mediaType: mediaType,
         isHighlighted: false,
+        musicInfo: musicInfo,
+        mentions: mentions,
+        location: location,
+        filter: filter,
+        reactions: [],
+        allowSharing: allowSharing,
+        replies: [],
       );
 
       await _firestore.collection('stories').add(story.toMap());
@@ -199,6 +295,99 @@ class StoryService {
     } catch (e) {
       print('❌ Error marking story as viewed: $e');
       await _errorHandler.handleFirebaseException(e, context);
+    }
+  }
+
+  // React to a story with an emoji
+  Future<void> reactToStory(String storyId, String emoji,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      DocumentReference storyRef =
+          _firestore.collection('stories').doc(storyId);
+
+      return _firestore.runTransaction((transaction) async {
+        DocumentSnapshot storySnapshot = await transaction.get(storyRef);
+
+        if (!storySnapshot.exists) {
+          throw Exception("Story does not exist!");
+        }
+
+        final storyData = storySnapshot.data() as Map<String, dynamic>;
+        List<Map<String, dynamic>> reactions =
+            List<Map<String, dynamic>>.from(storyData['reactions'] ?? []);
+
+        // Check if the user has already reacted with this emoji
+        final existingReactionIndex = reactions.indexWhere((reaction) =>
+            reaction['userId'] == currentUserId && reaction['emoji'] == emoji);
+
+        if (existingReactionIndex != -1) {
+          // User already reacted with this emoji, remove it
+          reactions.removeAt(existingReactionIndex);
+        } else {
+          // Add new reaction
+          reactions.add({
+            'userId': currentUserId,
+            'emoji': emoji,
+            'timestamp': Timestamp.now(),
+          });
+        }
+
+        transaction.update(storyRef, {'reactions': reactions});
+      });
+    } catch (e) {
+      print('❌ Error reacting to story: $e');
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
+    }
+  }
+
+  // Add a reply to a story
+  Future<void> replyToStory(String storyId, String reply,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      DocumentSnapshot userDoc =
+          await _firestore.collection('users').doc(currentUserId).get();
+
+      if (!userDoc.exists) {
+        throw Exception("User not found");
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+
+      DocumentReference storyRef =
+          _firestore.collection('stories').doc(storyId);
+
+      return _firestore.runTransaction((transaction) async {
+        DocumentSnapshot storySnapshot = await transaction.get(storyRef);
+
+        if (!storySnapshot.exists) {
+          throw Exception("Story does not exist!");
+        }
+
+        final storyData = storySnapshot.data() as Map<String, dynamic>;
+        List<Map<String, dynamic>> replies =
+            List<Map<String, dynamic>>.from(storyData['replies'] ?? []);
+
+        // Add new reply
+        replies.add({
+          'userId': currentUserId,
+          'username': userData['username'] ?? 'Anonymous',
+          'profileImageUrl': userData['profileImageUrl'] ?? '',
+          'reply': reply,
+          'timestamp': Timestamp.now(),
+        });
+
+        transaction.update(storyRef, {'replies': replies});
+      });
+    } catch (e) {
+      print('❌ Error replying to story: $e');
+      _errorController.add("Couldn't add reply. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
     }
   }
 
@@ -256,6 +445,99 @@ class StoryService {
     } catch (e) {
       print('❌ Error updating story highlight status: $e');
       _errorController.add("Couldn't update story. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
+    }
+  }
+
+  // Add users to mention list in a story
+  Future<void> addMentions(String storyId, List<String> newMentions,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      // Check if the story belongs to current user
+      DocumentSnapshot storyDoc =
+          await _firestore.collection('stories').doc(storyId).get();
+
+      if (!storyDoc.exists) return;
+
+      Map<String, dynamic> storyData = storyDoc.data() as Map<String, dynamic>;
+
+      if (storyData['userId'] != currentUserId) {
+        throw Exception("You don't have permission to edit this story");
+      }
+
+      // Get current mentions and add new ones (avoiding duplicates)
+      List<String> currentMentions =
+          List<String>.from(storyData['mentions'] ?? []);
+      Set<String> updatedMentions = {...currentMentions, ...newMentions};
+
+      await _firestore.collection('stories').doc(storyId).update({
+        'mentions': updatedMentions.toList(),
+      });
+    } catch (e) {
+      print('❌ Error adding mentions to story: $e');
+      _errorController.add("Couldn't update mentions. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
+    }
+  }
+
+  // Add or update music info to a story
+  Future<void> updateStoryMusic(String storyId, Map<String, dynamic> musicInfo,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      // Check if the story belongs to current user
+      DocumentSnapshot storyDoc =
+          await _firestore.collection('stories').doc(storyId).get();
+
+      if (!storyDoc.exists) return;
+
+      Map<String, dynamic> storyData = storyDoc.data() as Map<String, dynamic>;
+
+      if (storyData['userId'] != currentUserId) {
+        throw Exception("You don't have permission to edit this story");
+      }
+
+      await _firestore.collection('stories').doc(storyId).update({
+        'musicInfo': musicInfo,
+      });
+    } catch (e) {
+      print('❌ Error updating story music: $e');
+      _errorController.add("Couldn't update music. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
+    }
+  }
+
+  // Change story sharing permissions
+  Future<void> updateSharingPermission(String storyId, bool allowSharing,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      // Check if the story belongs to current user
+      DocumentSnapshot storyDoc =
+          await _firestore.collection('stories').doc(storyId).get();
+
+      if (!storyDoc.exists) return;
+
+      Map<String, dynamic> storyData = storyDoc.data() as Map<String, dynamic>;
+
+      if (storyData['userId'] != currentUserId) {
+        throw Exception("You don't have permission to edit this story");
+      }
+
+      await _firestore.collection('stories').doc(storyId).update({
+        'allowSharing': allowSharing,
+      });
+    } catch (e) {
+      print('❌ Error updating story sharing permissions: $e');
+      _errorController
+          .add("Couldn't update sharing permissions. Please try again.");
       await _errorHandler.handleFirebaseException(e, context);
       rethrow;
     }
@@ -342,6 +624,23 @@ class StoryService {
     }
   }
 
+  // Pick video from camera or gallery
+  Future<XFile?> pickStoryVideo(ImageSource source,
+      {BuildContext? context}) async {
+    try {
+      final XFile? pickedVideo = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(seconds: 30), // Limit video length
+      );
+      return pickedVideo;
+    } catch (e) {
+      print('❌ Error picking story video: $e');
+      _errorController.add("Couldn't pick video. Please try again.");
+      await _errorHandler.handleFirebaseException(e, context);
+      return null;
+    }
+  }
+
   // Process picked image and return the file and web image bytes
   Future<Map<String, dynamic>> processPickedStoryMedia(
       XFile? pickedFile) async {
@@ -373,10 +672,27 @@ class StoryService {
     }
   }
 
+  // Apply a filter to an image
+  Future<File?> applyFilterToImage(File imageFile, String filterName,
+      {BuildContext? context}) async {
+    // This is a placeholder for filter implementation
+    // In a real implementation, you would use image processing libraries
+    try {
+      // For now, we'll just return the original file since we don't have image processing
+      // In a real app, this would apply specific filter effects using packages like image or photofilters
+      return imageFile;
+    } catch (e) {
+      print('❌ Error applying filter: $e');
+      _errorController.add("Couldn't apply filter. Please try again.");
+      return null;
+    }
+  }
+
   // Upload story media to Cloudinary and return the URL
   Future<String?> uploadStoryMedia({
     required dynamic mediaFile,
     Uint8List? webImage,
+    String? filterName,
     BuildContext? context,
   }) async {
     if (mediaFile == null) return null;
@@ -384,12 +700,23 @@ class StoryService {
     try {
       print('🔄 Starting story media upload process');
 
+      // Apply filter if specified and not on web
+      if (filterName != null &&
+          filterName != 'none' &&
+          !kIsWeb &&
+          mediaFile is File) {
+        File? filteredFile =
+            await applyFilterToImage(mediaFile, filterName, context: context);
+        if (filteredFile != null) {
+          mediaFile = filteredFile;
+        }
+      }
+
       // Upload the image to Cloudinary using our service
       String downloadUrl = await CloudinaryService.uploadImage(
         imageFile: mediaFile,
         webImage: webImage,
-        preset:
-            CloudinaryService.storyMediaPreset, // Assuming this preset exists
+        preset: CloudinaryService.storyMediaPreset,
       );
 
       return downloadUrl;
@@ -413,12 +740,17 @@ class StoryService {
     }
   }
 
-  // Create a story with media - full process
+  // Create a story with media - full process with advanced options
   Future<bool> createStoryWithMedia({
     required XFile? pickedMedia,
     String caption = '',
     String background = '',
     String mediaType = 'image',
+    Map<String, dynamic>? musicInfo,
+    List<String> mentions = const [],
+    String? location,
+    String? filter,
+    bool allowSharing = true,
     BuildContext? context,
   }) async {
     if (currentUserId == null) {
@@ -473,6 +805,7 @@ class StoryService {
             mediaUrl = await uploadStoryMedia(
               mediaFile: processedMedia['mediaFile'],
               webImage: processedMedia['webImage'],
+              filterName: filter,
               context: context,
             );
 
@@ -510,12 +843,17 @@ class StoryService {
         }
       }
 
-      // Create the story
+      // Create the story with all advanced options
       await addStory(
         mediaUrl: mediaUrl ?? '', // Empty for text-only stories
         caption: caption,
         background: background,
         mediaType: mediaType,
+        musicInfo: musicInfo,
+        mentions: mentions,
+        location: location,
+        filter: filter,
+        allowSharing: allowSharing,
         context: context,
       );
 
@@ -588,6 +926,38 @@ class StoryService {
       await _errorHandler.handleFirebaseException(e, context);
 
       // Even if there's an error, don't rethrow as the collection will be created when needed
+    }
+  }
+
+  // Get stories containing a specific hashtag
+  Future<List<Story>> getStoriesByHashtag(String hashtag,
+      {BuildContext? context}) async {
+    try {
+      // Normalize the hashtag by removing # if present and converting to lowercase
+      hashtag = hashtag.startsWith('#') ? hashtag.substring(1) : hashtag;
+      hashtag = hashtag.toLowerCase();
+
+      // Query for stories with this hashtag in the caption
+      final snapshot = await _firestore
+          .collection('stories')
+          .where('expiryTime',
+              isGreaterThan: Timestamp.fromDate(DateTime.now()))
+          .get();
+
+      // Filter stories that contain the hashtag in caption
+      return snapshot.docs
+          .map((doc) => Story.fromFirestore(doc))
+          .where((story) {
+        final lowerCaption = story.caption.toLowerCase();
+        return lowerCaption.contains('#$hashtag') ||
+            lowerCaption.contains(' $hashtag ') ||
+            lowerCaption.startsWith('$hashtag ') ||
+            lowerCaption.endsWith(' $hashtag');
+      }).toList();
+    } catch (e) {
+      print('❌ Error searching stories by hashtag: $e');
+      await _errorHandler.handleFirebaseException(e, context);
+      return [];
     }
   }
 }

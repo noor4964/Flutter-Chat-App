@@ -13,6 +13,13 @@ class Story {
   final String background; // For text-only stories, can be a color or gradient
   final String mediaType; // 'image', 'video', or 'text'
   final bool isHighlighted; // If story is saved to highlights
+  final Map<String, dynamic>? musicInfo; // Music associated with the story
+  final List<String> mentions; // Users mentioned in the story
+  final String? location; // Location associated with the story
+  final String? filter; // Applied filter name
+  final List<Map<String, dynamic>> reactions; // Reactions from viewers
+  final bool allowSharing; // Whether story can be shared or not
+  final List<Map<String, dynamic>> replies; // Replies to the story
 
   Story({
     required this.id,
@@ -27,6 +34,13 @@ class Story {
     this.background = '',
     this.mediaType = 'image',
     this.isHighlighted = false,
+    this.musicInfo,
+    this.mentions = const [],
+    this.location,
+    this.filter,
+    this.reactions = const [],
+    this.allowSharing = true,
+    this.replies = const [],
   });
 
   bool isViewed(String viewerId) {
@@ -47,6 +61,37 @@ class Story {
     return (timeLeft / totalDuration).clamp(0.0, 1.0) * 100;
   }
 
+  // Calculate the time remaining in human-readable format
+  String get timeLeftFormatted {
+    if (isExpired) return 'Expired';
+
+    final Duration timeLeft = expiryTime.difference(DateTime.now());
+
+    if (timeLeft.inHours >= 1) {
+      return '${timeLeft.inHours}h ${timeLeft.inMinutes.remainder(60)}m remaining';
+    } else if (timeLeft.inMinutes >= 1) {
+      return '${timeLeft.inMinutes}m ${timeLeft.inSeconds.remainder(60)}s remaining';
+    } else {
+      return '${timeLeft.inSeconds}s remaining';
+    }
+  }
+
+  // Get the reaction count for a specific emoji type
+  int getReactionCount(String emoji) {
+    return reactions.where((reaction) => reaction['emoji'] == emoji).length;
+  }
+
+  // Check if a specific user has reacted with a specific emoji
+  bool hasUserReacted(String userId, String emoji) {
+    return reactions.any((reaction) =>
+        reaction['userId'] == userId && reaction['emoji'] == emoji);
+  }
+
+  // Get all user replies
+  List<Map<String, dynamic>> get userReplies {
+    return List.from(replies);
+  }
+
   factory Story.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return Story(
@@ -62,6 +107,13 @@ class Story {
       background: data['background'] ?? '',
       mediaType: data['mediaType'] ?? 'image',
       isHighlighted: data['isHighlighted'] ?? false,
+      musicInfo: data['musicInfo'],
+      mentions: List<String>.from(data['mentions'] ?? []),
+      location: data['location'],
+      filter: data['filter'],
+      reactions: List<Map<String, dynamic>>.from(data['reactions'] ?? []),
+      allowSharing: data['allowSharing'] ?? true,
+      replies: List<Map<String, dynamic>>.from(data['replies'] ?? []),
     );
   }
 
@@ -78,6 +130,13 @@ class Story {
       'background': background,
       'mediaType': mediaType,
       'isHighlighted': isHighlighted,
+      'musicInfo': musicInfo,
+      'mentions': mentions,
+      'location': location,
+      'filter': filter,
+      'reactions': reactions,
+      'allowSharing': allowSharing,
+      'replies': replies,
     };
   }
 
@@ -94,6 +153,13 @@ class Story {
     String? background,
     String? mediaType,
     bool? isHighlighted,
+    Map<String, dynamic>? musicInfo,
+    List<String>? mentions,
+    String? location,
+    String? filter,
+    List<Map<String, dynamic>>? reactions,
+    bool? allowSharing,
+    List<Map<String, dynamic>>? replies,
   }) {
     return Story(
       id: id ?? this.id,
@@ -108,6 +174,13 @@ class Story {
       background: background ?? this.background,
       mediaType: mediaType ?? this.mediaType,
       isHighlighted: isHighlighted ?? this.isHighlighted,
+      musicInfo: musicInfo ?? this.musicInfo,
+      mentions: mentions ?? this.mentions,
+      location: location ?? this.location,
+      filter: filter ?? this.filter,
+      reactions: reactions ?? this.reactions,
+      allowSharing: allowSharing ?? this.allowSharing,
+      replies: replies ?? this.replies,
     );
   }
 }

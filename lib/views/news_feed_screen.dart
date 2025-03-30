@@ -25,7 +25,7 @@ class NewsFeedScreen extends StatefulWidget {
 class _NewsFeedScreenState extends State<NewsFeedScreen>
     with AutomaticKeepAliveClientMixin {
   final FeedService _feedService = FeedService();
-  final StoryService _storyService = StoryService(); // Add story service
+  final StoryService _storyService = StoryService();
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
@@ -34,9 +34,19 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
   String? _errorMessage;
   bool _isRecovering = false;
 
+  // Story specific variables
+  bool _hasActiveStory = false;
+  Stream<List<Story>>? _highlightsStream;
+  Map<String, List<Story>> _cachedStoryGroups = {};
+  DateTime? _lastStoryRefresh;
+  bool _storyLoadingError = false;
+
   // Create a stream controller to help with error recovery
   Stream<List<Post>>? _postsStream;
-  Stream<List<Story>>? _storiesStream; // Add stories stream
+  Stream<List<Story>>? _storiesStream;
+
+  // Controller for story view animation
+  final PageController _storyPageController = PageController();
 
   @override
   bool get wantKeepAlive => true;
@@ -53,7 +63,9 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
           _loadCurrentUserInfo();
           _setupErrorListener();
           _initializePostsStream();
-          _initializeStoriesStream(); // Initialize stories stream
+          _initializeStoriesStream();
+          _initializeHighlightsStream();
+          _checkForActiveUserStory();
         }
       });
     } catch (e) {
@@ -83,6 +95,43 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
     });
   }
 
+  // New method to initialize highlights stream
+  void _initializeHighlightsStream() {
+    try {
+      // Get current user ID
+      final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId != null) {
+        _highlightsStream = _storyService.getUserHighlights(
+          currentUserId,
+          context: context,
+        );
+      }
+    } catch (e) {
+      print('❌ Error initializing highlights stream: $e');
+    }
+  }
+
+  // New method to check if current user has active stories
+  Future<void> _checkForActiveUserStory() async {
+    try {
+      final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId != null) {
+        final userStories = await _storyService.getUserStoriesFuture(
+          currentUserId,
+          context: context,
+        );
+
+        if (mounted) {
+          setState(() {
+            _hasActiveStory = userStories.isNotEmpty;
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Error checking for active user story: $e');
+    }
+  }
+
   void _initializePostsStream() {
     try {
       _postsStream = _feedService.getPosts(context: context);
@@ -95,8 +144,29 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
   void _initializeStoriesStream() {
     try {
       _storiesStream = _storyService.getActiveStories(context: context);
+
+      // Cache story groups for smoother UI
+      _storiesStream?.listen((stories) {
+        if (mounted) {
+          setState(() {
+            _cachedStoryGroups = _storyService.groupStoriesByUser(stories);
+            _lastStoryRefresh = DateTime.now();
+            _storyLoadingError = false;
+          });
+        }
+      }, onError: (e) {
+        print('❌ Error in stories stream: $e');
+        if (mounted) {
+          setState(() {
+            _storyLoadingError = true;
+          });
+        }
+      });
     } catch (e) {
       print('❌ Error initializing stories stream: $e');
+      setState(() {
+        _storyLoadingError = true;
+      });
     }
   }
 
@@ -182,6 +252,7 @@ class _NewsFeedScreenState extends State<NewsFeedScreen>
       // Reinitialize the posts and stories streams
       _initializePostsStream();
       _initializeStoriesStream();
+      _initializeHighlightsStream();
 
       // Wait a moment for the recovery to take effect
       await Future.delayed(const Duration(milliseconds: 500));
