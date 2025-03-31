@@ -37,11 +37,15 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   String? _userProfileImageUrl;
   String? _username;
 
+  // State variable for friend request count
+  int _friendRequestCount = 0;
+
   @override
   void initState() {
     super.initState();
     _isMounted = true;
     _loadUserProfileData(); // Load profile data when screen initializes
+    _loadFriendRequestCount(); // Load friend request count
   }
 
   @override
@@ -49,6 +53,29 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     _isMounted = false;
     _pageController.dispose();
     super.dispose();
+  }
+
+  // Load friend request count from Firestore
+  Future<void> _loadFriendRequestCount() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        // Get pending friend requests from 'connections' collection
+        QuerySnapshot connectionsSnapshot = await FirebaseFirestore.instance
+            .collection('connections')
+            .where('receiverId', isEqualTo: user.uid)
+            .where('status', isEqualTo: 'pending')
+            .get();
+
+        if (_isMounted && mounted) {
+          setState(() {
+            _friendRequestCount = connectionsSnapshot.docs.length;
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading friend request count: $e');
+    }
   }
 
   // Load user profile data from Firestore
@@ -1010,9 +1037,14 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
                   context,
                   MaterialPageRoute(
                       builder: (context) => PendingRequestsScreen()),
-                );
+                ).then((_) {
+                  // Refresh friend request count when returning
+                  _loadFriendRequestCount();
+                });
               },
-              badge: '2', // This could be dynamic based on actual request count
+              badge: _friendRequestCount > 0
+                  ? _friendRequestCount.toString()
+                  : null,
             ),
           ]),
 

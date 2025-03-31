@@ -5,7 +5,6 @@ import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
-import 'package:flutter_chat_app/services/story_service.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
@@ -15,6 +14,8 @@ import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
+
+import 'services/story_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
