@@ -644,11 +644,14 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                       if (reply.isNotEmpty) {
                         Navigator.pop(context);
 
-                        // Show loading indicator
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        // Show loading indicator with a key to dismiss it later
+                        final ScaffoldFeatureController loadingSnackBar =
+                            ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Sending reply...'),
-                            duration: Duration(seconds: 1),
+                            duration: Duration(
+                                seconds:
+                                    30), // Longer duration that will be dismissed manually
                           ),
                         );
 
@@ -659,6 +662,9 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                             reply,
                             context: context,
                           );
+
+                          // Hide the loading snackbar
+                          loadingSnackBar.close();
 
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -672,6 +678,9 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                             );
                           }
                         } catch (e) {
+                          // Hide the loading snackbar
+                          loadingSnackBar.close();
+
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -934,6 +943,18 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                   return InkWell(
                     onTap: () async {
                       Navigator.pop(context);
+
+                      // Show loading indicator with a key to dismiss it later
+                      final ScaffoldFeatureController loadingSnackBar =
+                          ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Sending reaction...'),
+                          duration: Duration(
+                              seconds:
+                                  30), // Longer duration that will be dismissed manually
+                        ),
+                      );
+
                       try {
                         // Send the reaction
                         await _storyService.reactToStory(
@@ -941,6 +962,9 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                           commonEmojis[index],
                           context: context,
                         );
+
+                        // Hide the loading snackbar
+                        loadingSnackBar.close();
 
                         // Show confirmation
                         if (mounted) {
@@ -953,6 +977,9 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                           );
                         }
                       } catch (e) {
+                        // Hide the loading snackbar
+                        loadingSnackBar.close();
+
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

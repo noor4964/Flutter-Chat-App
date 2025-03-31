@@ -548,16 +548,136 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                         stream:
                             _chatService.getMessages(widget.chatId, user!.uid),
                         builder: (context, snapshot) {
-                          if (!snapshot.hasData) {
-                            return Center(
+                          // Only show loading when connection state is waiting and we have no data
+                          // This prevents showing loading indicator when there are no messages
+                          if (snapshot.connectionState ==
+                                  ConnectionState.waiting &&
+                              !snapshot.hasData) {
+                            // Enhanced loading screen with skeleton UI
+                            return Padding(
+                              padding: const EdgeInsets.all(16.0),
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  const CircularProgressIndicator(),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Loading messages...',
-                                    style: TextStyle(color: Colors.grey[600]),
+                                  // Subtle branded loading indicator
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.surfaceVariant
+                                          .withOpacity(0.7),
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05),
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 5),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: 50,
+                                          height: 50,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 3,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                              colorScheme.primary,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Loading messages...',
+                                          style: TextStyle(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Please wait while we retrieve your conversation',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: colorScheme.onSurfaceVariant
+                                                .withOpacity(0.7),
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Skeleton message bubbles
+                                  const SizedBox(height: 40),
+                                  Expanded(
+                                    child: ListView.builder(
+                                      itemCount: 5,
+                                      itemBuilder: (context, index) {
+                                        // Alternate between left and right alignment for skeleton bubbles
+                                        final bool isLeft = index % 2 == 0;
+                                        return Align(
+                                          alignment: isLeft
+                                              ? Alignment.centerLeft
+                                              : Alignment.centerRight,
+                                          child: Container(
+                                            margin: EdgeInsets.only(
+                                                bottom: 16,
+                                                left: isLeft ? 8 : 80,
+                                                right: isLeft ? 80 : 8),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 12),
+                                            decoration: BoxDecoration(
+                                              color: isLeft
+                                                  ? colorScheme.surfaceVariant
+                                                      .withOpacity(0.5)
+                                                  : colorScheme.primary
+                                                      .withOpacity(0.2),
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Container(
+                                                  width: isLeft ? 120 : 150,
+                                                  height: 16,
+                                                  decoration: BoxDecoration(
+                                                    color: isLeft
+                                                        ? Colors.grey
+                                                            .withOpacity(0.2)
+                                                        : colorScheme.primary
+                                                            .withOpacity(0.2),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            4),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Container(
+                                                  width: isLeft ? 80 : 100,
+                                                  height: 16,
+                                                  decoration: BoxDecoration(
+                                                    color: isLeft
+                                                        ? Colors.grey
+                                                            .withOpacity(0.2)
+                                                        : colorScheme.primary
+                                                            .withOpacity(0.2),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            4),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
                                   ),
                                 ],
                               ),
