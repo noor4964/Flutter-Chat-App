@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'package:transparent_image/transparent_image.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String chatId;
@@ -89,12 +90,22 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
   }
 
   bool _isLoadingMoreMessages = false;
+  // Add flag to control loading visibility
+  bool _shouldShowLoading = false;
 
   Future<void> _loadMoreMessages() async {
     if (!_hasMoreMessages || _isLoadingMoreMessages) return;
 
     setState(() {
       _isLoadingMoreMessages = true;
+      // Only show loading after a short delay to prevent flicker
+      Future.delayed(Duration(milliseconds: 300), () {
+        if (_isLoadingMoreMessages && mounted) {
+          setState(() {
+            _shouldShowLoading = true;
+          });
+        }
+      });
     });
 
     try {
@@ -144,6 +155,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
       print('Error loading more messages: $e');
       setState(() {
         _isLoadingMoreMessages = false;
+        _shouldShowLoading = false;
       });
     }
   }
@@ -549,6 +561,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
     });
   }
 
+  // Preload image to prevent flickering when displaying
+  Future<void> _preloadImage(String imageUrl) async {
+    await precacheImage(NetworkImage(imageUrl), context);
+  }
+
   void _onTypingChanged() {
     final isTyping = _messageController.text.isNotEmpty;
 
@@ -671,14 +688,17 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
 
           // Chat messages
           Expanded(
-            // Always use the merged messages list for a seamless experience
-            child: _initialLoadDone
+            child: _allMessages.isNotEmpty || _pendingMessages.isNotEmpty
                 ? _buildMessageList([..._pendingMessages, ..._allMessages])
-                : _buildLoadingView(),
+                : (_isLoadingFromCache && _isFirstLoad)
+                    ? Center(
+                        child: CircularProgressIndicator(),
+                      )
+                    : Container(), // Empty container instead of loading indicator
           ),
 
-          // Loading indicator for pagination at bottom
-          if (_isLoadingMoreMessages)
+          // Loading indicator for pagination at bottom (only shown after delay)
+          if (_shouldShowLoading && _isLoadingMoreMessages)
             Container(
               height: 30,
               alignment: Alignment.center,
@@ -755,7 +775,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
                                 _isAttaching = false;
                               });
 
-                              // Scroll to show the uploading message
+                              // Scroll to show uploading message
                               _scrollToBottom();
 
                               // Upload image to Firebase Storage
@@ -847,215 +867,191 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
     );
   }
 
-  Widget _buildLoadingView() {
-    // Enhanced loading skeleton that resembles a chat interface instead of just a spinner
-    return ListView.builder(
-      reverse: true,
-      padding: EdgeInsets.all(PlatformHelper.isDesktop ? 16.0 : 8.0),
-      itemCount: 5, // Show a few message skeletons
-      itemBuilder: (context, index) {
-        // Alternate between left and right alignment for a natural chat appearance
-        final bool isLeft = index % 2 == 0;
-
-        return Align(
-          alignment: isLeft ? Alignment.centerLeft : Alignment.centerRight,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 8.0),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12.0,
-              vertical: 8.0,
-            ),
-            decoration: BoxDecoration(
-              color: isLeft
-                  ? Colors.grey.shade200.withOpacity(0.7)
-                  : Colors.deepPurple.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(16.0),
-            ),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.7,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Shimmer effect for message content
-                Container(
-                  width: double.infinity,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: isLeft
-                        ? Colors.grey.shade300
-                        : Colors.deepPurple.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Shimmer effect for shorter line
-                Container(
-                  width: 100,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: isLeft
-                        ? Colors.grey.shade300
-                        : Colors.deepPurple.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                // Timestamp shimmer
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: Container(
-                    width: 50,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: isLeft
-                          ? Colors.grey.shade300
-                          : Colors.deepPurple.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // Optimized message list builder with better message rendering
+  // Method to build the chat message list
   Widget _buildMessageList(List<Map<String, dynamic>> messages) {
-    final sortedMessages = [...messages];
-
-    // Sort by timestamp for consistent ordering
-    sortedMessages.sort((a, b) {
-      final aTimestamp = a['timestamp'] as Timestamp;
-      final bTimestamp = b['timestamp'] as Timestamp;
-      return bTimestamp.compareTo(aTimestamp);
-    });
-
     return ListView.builder(
       controller: _scrollController,
       reverse: true,
-      padding: EdgeInsets.all(PlatformHelper.isDesktop ? 16.0 : 8.0),
-      itemCount: sortedMessages.length + (_hasMoreMessages ? 1 : 0),
+      padding: const EdgeInsets.all(10),
+      itemCount: messages.length,
       itemBuilder: (context, index) {
-        // If we're at the end and have more messages, show loading indicator
-        if (_hasMoreMessages && index == sortedMessages.length) {
-          return Container(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            alignment: Alignment.center,
-            child: const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
-        }
-
-        final message = sortedMessages[index];
+        final message = messages[index];
         final isCurrentUser = message['senderId'] == currentUser!.uid;
-        final messageType = message['type'] ?? 'text';
+        final isImage = message['type'] == 'image';
         final isPending = message['isPending'] == true;
         final isFailed = message['isFailed'] == true;
         final isUploading = message['isUploading'] == true;
 
-        return Align(
-          alignment:
-              isCurrentUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 4.0),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12.0,
-              vertical: 8.0,
-            ),
-            decoration: BoxDecoration(
-              color: isCurrentUser
-                  ? (isPending
-                      ? Colors.deepPurple.withOpacity(0.7)
-                      : isFailed
-                          ? Colors.red.withOpacity(0.7)
-                          : Colors.deepPurple)
-                  : Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(16.0),
-            ),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.7,
-            ),
-            child: messageType == 'image'
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8.0),
-                    child: Image.network(
-                      message['content'],
-                      loadingBuilder: (BuildContext context, Widget child,
-                          ImageChunkEvent? loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
+        // Preload images when they appear in the list for smoother experience
+        if (isImage && !isUploading && message['content'] is String) {
+          _preloadImage(message['content']);
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Align(
+            alignment:
+                isCurrentUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
+              ),
+              padding: isImage
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: isCurrentUser
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.8)
+                    : Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    spreadRadius: 1,
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Message content
+                  if (isImage && !isUploading)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: GestureDetector(
+                        onTap: () {
+                          // Show full-screen image view
+                          showDialog(
+                            context: context,
+                            builder: (context) => Dialog(
+                              insetPadding: EdgeInsets.zero,
+                              child: Stack(
+                                children: [
+                                  InteractiveViewer(
+                                    child: Image.network(
+                                      message['content'],
+                                      fit: BoxFit.contain,
+                                      // Use FadeInImage for smoother image loading
+                                      loadingBuilder: (_, __, ___) =>
+                                          FadeInImage(
+                                        placeholder:
+                                            MemoryImage(kTransparentImage),
+                                        image: NetworkImage(message['content']),
+                                        fit: BoxFit.contain,
+                                        fadeInDuration:
+                                            const Duration(milliseconds: 300),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.close,
+                                          color: Colors.white),
+                                      onPressed: () => Navigator.pop(context),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                        // Use FadeInImage for smoother image loading
+                        child: FadeInImage(
+                          placeholder: MemoryImage(kTransparentImage),
+                          image: NetworkImage(message['content']),
+                          fit: BoxFit.cover,
                           width: 200,
-                          height: 200,
-                          alignment: Alignment.center,
-                          child: CircularProgressIndicator(
-                            value: loadingProgress.expectedTotalBytes != null
-                                ? loadingProgress.cumulativeBytesLoaded /
-                                    loadingProgress.expectedTotalBytes!
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              message['content'],
-                              style: TextStyle(
-                                color:
-                                    isCurrentUser ? Colors.white : Colors.black,
+                          fadeInDuration: const Duration(milliseconds: 300),
+                          imageErrorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              width: 200,
+                              height: 150,
+                              color: Colors.grey[300],
+                              child: Center(
+                                child: Icon(Icons.broken_image, size: 40),
                               ),
-                            ),
-                          ),
-                          if (isPending) ...[
-                            const SizedBox(width: 5),
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                          if (isFailed) ...[
-                            const SizedBox(width: 5),
-                            Icon(
-                              Icons.error_outline,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                          ],
-                        ],
+                            );
+                          },
+                        ),
                       ),
-                      const SizedBox(height: 4.0),
+                    )
+                  else if (isUploading)
+                    SizedBox(
+                      width: 150,
+                      height: 100,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Uploading image...',
+                              style: TextStyle(
+                                color: isCurrentUser
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      message['content'],
+                      style: TextStyle(
+                        color: isCurrentUser ? Colors.white : Colors.black,
+                        fontSize: 16,
+                      ),
+                    ),
+
+                  const SizedBox(height: 4),
+
+                  // Message status indicators
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isPending && !isFailed && !isUploading)
+                        const Icon(
+                          Icons.access_time,
+                          size: 12,
+                          color: Colors.grey,
+                        )
+                      else if (isFailed)
+                        const Icon(
+                          Icons.error_outline,
+                          size: 12,
+                          color: Colors.red,
+                        )
+                      else if (isCurrentUser)
+                        Icon(
+                          Icons.check_circle,
+                          size: 12,
+                          color: (message['readBy'] ?? []).length > 1
+                              ? Colors.green
+                              : Colors.grey,
+                        ),
+                      const SizedBox(width: 4),
                       Text(
-                        isPending
-                            ? 'Sending...'
-                            : isFailed
-                                ? 'Failed to send'
-                                : _formatTimestamp(message['timestamp']),
-                        style: TextStyle(
-                          color: isCurrentUser
-                              ? Colors.white.withOpacity(0.7)
-                              : Colors.black54,
-                          fontSize: 10.0,
+                        message['timestamp'] is Timestamp
+                            ? _formatTimestamp(message['timestamp'])
+                            : '',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
                         ),
                       ),
                     ],
                   ),
+                ],
+              ),
+            ),
           ),
         );
       },

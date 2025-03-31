@@ -12,6 +12,7 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
+import 'dart:async';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -44,12 +45,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Group messages by date
   Map<String, List<Message>> _groupedMessages = {};
 
+  // Timer for periodically marking messages as read
+  Timer? _messageReadTimer;
+
   @override
   void initState() {
     super.initState();
     _loadChatPersonDetails();
     _cacheUsernames();
+
+    // Mark messages as read when the chat is opened
     _markMessagesAsRead();
+
+    // Set up a timer to periodically mark messages as read
+    _setupMessageReadTimer();
 
     // Initialize animation controller for send button
     _sendButtonAnimationController = AnimationController(
@@ -89,6 +98,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _messageController.dispose();
     _scrollController.dispose();
     _sendButtonAnimationController.dispose();
+
+    // Cancel message read timer
+    _messageReadTimer?.cancel();
+
     super.dispose();
   }
 
@@ -169,6 +182,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (user != null) {
       await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
     }
+  }
+
+  void _setupMessageReadTimer() {
+    // Cancel any existing timer
+    _messageReadTimer?.cancel();
+
+    // Create a new timer that periodically marks messages as read
+    _messageReadTimer =
+        Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (user != null && mounted) {
+        // Mark messages as read
+        await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
+
+        // Also mark the chat as read at the chat level
+        await _chatService.markChatAsRead(widget.chatId, user!.uid);
+
+        print('Automatically marked messages as read');
+      }
+    });
   }
 
   void _showChatPersonDetails() {
@@ -541,320 +573,248 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   child: FutureBuilder<void>(
                     future: _cacheUsernames(),
                     builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
+                      // No loading indicator, directly return StreamBuilder
                       return StreamBuilder<List<Message>>(
                         stream:
                             _chatService.getMessages(widget.chatId, user!.uid),
                         builder: (context, snapshot) {
-                          // Only show loading when connection state is waiting and we have no data
-                          // This prevents showing loading indicator when there are no messages
-                          if (snapshot.connectionState ==
-                                  ConnectionState.waiting &&
-                              !snapshot.hasData) {
-                            // Enhanced loading screen with skeleton UI
-                            return Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  // Subtle branded loading indicator
-                                  Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.surfaceVariant
-                                          .withOpacity(0.7),
-                                      borderRadius: BorderRadius.circular(16),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.05),
-                                          blurRadius: 10,
-                                          offset: const Offset(0, 5),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        SizedBox(
-                                          width: 50,
-                                          height: 50,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 3,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                              colorScheme.primary,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          'Loading messages...',
-                                          style: TextStyle(
-                                            color: colorScheme.onSurfaceVariant,
-                                            fontWeight: FontWeight.w500,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Please wait while we retrieve your conversation',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                            color: colorScheme.onSurfaceVariant
-                                                .withOpacity(0.7),
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  // Skeleton message bubbles
-                                  const SizedBox(height: 40),
-                                  Expanded(
-                                    child: ListView.builder(
-                                      itemCount: 5,
-                                      itemBuilder: (context, index) {
-                                        // Alternate between left and right alignment for skeleton bubbles
-                                        final bool isLeft = index % 2 == 0;
-                                        return Align(
-                                          alignment: isLeft
-                                              ? Alignment.centerLeft
-                                              : Alignment.centerRight,
-                                          child: Container(
-                                            margin: EdgeInsets.only(
-                                                bottom: 16,
-                                                left: isLeft ? 8 : 80,
-                                                right: isLeft ? 80 : 8),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 16, vertical: 12),
-                                            decoration: BoxDecoration(
-                                              color: isLeft
-                                                  ? colorScheme.surfaceVariant
-                                                      .withOpacity(0.5)
-                                                  : colorScheme.primary
-                                                      .withOpacity(0.2),
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                            ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Container(
-                                                  width: isLeft ? 120 : 150,
-                                                  height: 16,
-                                                  decoration: BoxDecoration(
-                                                    color: isLeft
-                                                        ? Colors.grey
-                                                            .withOpacity(0.2)
-                                                        : colorScheme.primary
-                                                            .withOpacity(0.2),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            4),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Container(
-                                                  width: isLeft ? 80 : 100,
-                                                  height: 16,
-                                                  decoration: BoxDecoration(
-                                                    color: isLeft
-                                                        ? Colors.grey
-                                                            .withOpacity(0.2)
-                                                        : colorScheme.primary
-                                                            .withOpacity(0.2),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            4),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-
-                          var messages = snapshot.data!;
-
-                          // Group messages by date
-                          _groupMessagesByDate(messages);
-
-                          if (messages.isEmpty) {
+                          // Only show empty state if we have data but it's empty
+                          // or if there's an error
+                          if (snapshot.hasError) {
                             return Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_outline,
-                                    size: 64,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'No messages yet',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Say hi to start the conversation!',
-                                    style: TextStyle(
-                                      color: Colors.grey[500],
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                              child: Text('Error: ${snapshot.error}'),
                             );
                           }
 
-                          return ListView.builder(
-                            controller: _scrollController,
-                            reverse: true, // Reverse the order of the messages
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 16, horizontal: 8),
-                            itemCount: _groupedMessages.length,
-                            itemBuilder: (context, index) {
-                              final dateKey =
-                                  _groupedMessages.keys.elementAt(index);
-                              final messagesForDate =
-                                  _groupedMessages[dateKey]!;
+                          // If we have data, use it
+                          if (snapshot.hasData) {
+                            var messages = snapshot.data!;
 
-                              // Calculate max width for bubbles depending on screen size
-                              final screenWidth =
-                                  MediaQuery.of(context).size.width;
-                              final maxBubbleWidth = isTabletOrDesktop
-                                  ? screenWidth * 0.6 // 60% on larger screens
-                                  : screenWidth * 0.75; // 75% on mobile
+                            // Group messages by date
+                            _groupMessagesByDate(messages);
 
-                              return Column(
-                                children: [
-                                  // Date header
-                                  Container(
-                                    margin: const EdgeInsets.symmetric(
-                                        vertical: 16),
-                                    child: Center(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: colorScheme.surfaceVariant
-                                              .withOpacity(0.7),
-                                          borderRadius:
-                                              BorderRadius.circular(16),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              blurRadius: 4,
+                            // Only show empty chat if we explicitly have empty data
+                            if (messages.isEmpty) {
+                              return _buildEmptyChat();
+                            }
+
+                            return ListView.builder(
+                              controller: _scrollController,
+                              reverse:
+                                  true, // Reverse the order of the messages
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 16, horizontal: 8),
+                              itemCount: _groupedMessages.length,
+                              itemBuilder: (context, index) {
+                                final dateKey =
+                                    _groupedMessages.keys.elementAt(index);
+                                final messagesForDate =
+                                    _groupedMessages[dateKey]!;
+
+                                // Calculate max width for bubbles depending on screen size
+                                final screenWidth =
+                                    MediaQuery.of(context).size.width;
+                                final maxBubbleWidth = isTabletOrDesktop
+                                    ? screenWidth * 0.6 // 60% on larger screens
+                                    : screenWidth * 0.75; // 75% on mobile
+
+                                return Column(
+                                  children: [
+                                    // Date header
+                                    Container(
+                                      margin: const EdgeInsets.symmetric(
+                                          vertical: 16),
+                                      child: Center(
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.surfaceVariant
+                                                .withOpacity(0.7),
+                                            borderRadius:
+                                                BorderRadius.circular(16),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                blurRadius: 4,
+                                                color: Colors.black
+                                                    .withOpacity(0.1),
+                                                offset: const Offset(0, 1),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Text(
+                                            _getDateDisplay(dateKey),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
                                               color:
-                                                  Colors.black.withOpacity(0.1),
-                                              offset: const Offset(0, 1),
+                                                  colorScheme.onSurfaceVariant,
                                             ),
-                                          ],
-                                        ),
-                                        child: Text(
-                                          _getDateDisplay(dateKey),
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w500,
-                                            color: colorScheme.onSurfaceVariant,
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
 
-                                  // Messages for this date - organized by sender
-                                  ...messagesForDate.map((message) {
-                                    String senderName =
-                                        _usernamesCache[message.sender] ??
-                                            'Unknown';
-                                    bool isFirstInGroup = true;
-                                    bool isLastInGroup = true;
+                                    // Messages for this date - organized by sender
+                                    ...messagesForDate.map((message) {
+                                      String senderName =
+                                          _usernamesCache[message.sender] ??
+                                              'Unknown';
+                                      bool isFirstInGroup = true;
+                                      bool isLastInGroup = true;
 
-                                    // Find position in consecutive messages from same sender
-                                    final senderMessages = messagesForDate
-                                        .where(
-                                            (m) => m.sender == message.sender)
-                                        .toList();
-                                    final messageIdx =
-                                        senderMessages.indexOf(message);
+                                      // Find position in consecutive messages from same sender
+                                      final senderMessages = messagesForDate
+                                          .where(
+                                              (m) => m.sender == message.sender)
+                                          .toList();
+                                      final messageIdx =
+                                          senderMessages.indexOf(message);
 
-                                    if (messageIdx > 0) {
-                                      // Check if previous message is less than 2 minutes apart
-                                      final prevMessage =
-                                          senderMessages[messageIdx - 1];
-                                      final timeDiff = message.timestamp
-                                          .difference(prevMessage.timestamp)
-                                          .inMinutes;
+                                      if (messageIdx > 0) {
+                                        // Check if previous message is less than 2 minutes apart
+                                        final prevMessage =
+                                            senderMessages[messageIdx - 1];
+                                        final timeDiff = message.timestamp
+                                            .difference(prevMessage.timestamp)
+                                            .inMinutes;
 
-                                      isFirstInGroup = timeDiff > 2;
-                                    }
+                                        isFirstInGroup = timeDiff > 2;
+                                      }
 
-                                    if (messageIdx <
-                                        senderMessages.length - 1) {
-                                      // Check if next message is less than 2 minutes apart
-                                      final nextMessage =
-                                          senderMessages[messageIdx + 1];
-                                      final timeDiff = nextMessage.timestamp
-                                          .difference(message.timestamp)
-                                          .inMinutes;
+                                      if (messageIdx <
+                                          senderMessages.length - 1) {
+                                        // Check if next message is less than 2 minutes apart
+                                        final nextMessage =
+                                            senderMessages[messageIdx + 1];
+                                        final timeDiff = nextMessage.timestamp
+                                            .difference(message.timestamp)
+                                            .inMinutes;
 
-                                      isLastInGroup = timeDiff > 2;
-                                    }
+                                        isLastInGroup = timeDiff > 2;
+                                      }
 
-                                    return Hero(
-                                      tag:
-                                          'message-${message.id}-${message.timestamp.millisecondsSinceEpoch}',
-                                      child: Material(
-                                        color: Colors.transparent,
-                                        child: ConstrainedBox(
-                                          constraints: BoxConstraints(
-                                            maxWidth: maxBubbleWidth,
-                                          ),
-                                          child: GestureDetector(
-                                            onLongPress: () {
-                                              // Show message options with haptic feedback
-                                              HapticFeedback.mediumImpact();
-                                              _showMessageOptions(message);
-                                            },
-                                            child: AnimatedContainer(
-                                              duration: const Duration(
-                                                  milliseconds: 200),
-                                              margin: const EdgeInsets.only(
-                                                  bottom: 4),
-                                              child: MessageBubble(
-                                                sender: senderName,
-                                                text: message.text,
-                                                timestamp: message.timestamp,
-                                                isMe: message.isMe,
-                                                isRead: message.isRead,
-                                                isFirstInGroup: isFirstInGroup,
-                                                isLastInGroup: isLastInGroup,
+                                      return Hero(
+                                        tag:
+                                            'message-${message.id}-${message.timestamp.millisecondsSinceEpoch}',
+                                        child: Material(
+                                          color: Colors.transparent,
+                                          child: Row(
+                                            mainAxisAlignment: message.isMe
+                                                ? MainAxisAlignment.end
+                                                : MainAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.end,
+                                            children: [
+                                              // Chat head (profile picture) for recipient's messages
+                                              // Only show for the first message or when messages are separated by time
+                                              if (!message.isMe &&
+                                                  isFirstInGroup)
+                                                GestureDetector(
+                                                  onTap: _showChatPersonDetails,
+                                                  child: Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                            right: 8.0,
+                                                            bottom: 4.0),
+                                                    child: CircleAvatar(
+                                                      radius: 16,
+                                                      backgroundImage:
+                                                          _chatPersonAvatarUrl !=
+                                                                  null
+                                                              ? NetworkImage(
+                                                                  _chatPersonAvatarUrl!)
+                                                              : null,
+                                                      backgroundColor: theme
+                                                                  .brightness ==
+                                                              Brightness.dark
+                                                          ? colorScheme.primary
+                                                              .withOpacity(0.2)
+                                                          : Colors.grey
+                                                              .withOpacity(0.3),
+                                                      child: _chatPersonAvatarUrl ==
+                                                              null
+                                                          ? Icon(Icons.person,
+                                                              color: colorScheme
+                                                                  .primary,
+                                                              size: 16)
+                                                          : null,
+                                                    ),
+                                                  ),
+                                                ),
+                                              // Placeholder for alignment when avatar isn't shown
+                                              if (!message.isMe &&
+                                                  !isFirstInGroup)
+                                                const SizedBox(width: 40),
+
+                                              // The actual message bubble
+                                              Flexible(
+                                                child: ConstrainedBox(
+                                                  constraints: BoxConstraints(
+                                                    maxWidth: message.isMe
+                                                        ? maxBubbleWidth
+                                                        : maxBubbleWidth -
+                                                            40, // Reduce width for recipient's messages to account for avatar
+                                                  ),
+                                                  child: GestureDetector(
+                                                    onLongPress: () {
+                                                      // Show message options with haptic feedback
+                                                      HapticFeedback
+                                                          .mediumImpact();
+                                                      _showMessageOptions(
+                                                          message);
+                                                    },
+                                                    child: AnimatedContainer(
+                                                      duration: const Duration(
+                                                          milliseconds: 200),
+                                                      margin:
+                                                          const EdgeInsets.only(
+                                                              bottom: 4),
+                                                      child: MessageBubble(
+                                                        sender: senderName,
+                                                        text: message.text,
+                                                        timestamp:
+                                                            message.timestamp,
+                                                        isMe: message.isMe,
+                                                        isRead: message.isRead,
+                                                        isFirstInGroup:
+                                                            isFirstInGroup,
+                                                        isLastInGroup:
+                                                            isLastInGroup,
+                                                        status: message.isMe
+                                                            ? (message.isRead
+                                                                ? MessageStatus
+                                                                    .seen
+                                                                : MessageStatus
+                                                                    .sent)
+                                                            : MessageStatus
+                                                                .sent,
+                                                        seenTimestamp: message
+                                                                    .isRead &&
+                                                                message.isMe
+                                                            ? message
+                                                                    .readTimestamp ??
+                                                                DateTime.now()
+                                                            : null,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
                                               ),
-                                            ),
+                                            ],
                                           ),
                                         ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                ],
-                              );
-                            },
-                          );
+                                      );
+                                    }).toList(),
+                                  ],
+                                );
+                              },
+                            );
+                          }
+
+                          return _buildEmptyChat();
                         },
                       );
                     },
@@ -1527,5 +1487,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         );
       }
     }
+  }
+
+  Widget _buildEmptyChat() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 64,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No messages yet',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Say hi to start the conversation!',
+            style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

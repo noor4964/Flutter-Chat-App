@@ -331,9 +331,60 @@ class ChatService {
     if (_isWindowsWithoutFirebase) return;
 
     try {
+      print(
+          'Starting to mark messages as read in chat $chatId for user $userId');
+
+      // First mark the chat as read at the chat level
       await markChatAsRead(chatId, userId);
+
+      // Get unread messages sent by others (only those the current user hasn't read yet)
+      final messagesQuery = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .where('senderId',
+              isNotEqualTo: userId) // Only mark messages from others
+          .get();
+
+      print(
+          'Found ${messagesQuery.docs.length} messages to check for read status');
+
+      // Use a batch to update multiple messages efficiently
+      final batch = _firestore.batch();
+      final now = FieldValue.serverTimestamp();
+      int updatedCount = 0;
+
+      for (var doc in messagesQuery.docs) {
+        Map<String, dynamic> data = doc.data();
+        List<dynamic> readBy = List<dynamic>.from(data['readBy'] ?? []);
+
+        print('Checking message ${doc.id} with readBy: $readBy');
+
+        // Only update if user hasn't read it yet
+        if (!readBy.contains(userId)) {
+          print('User $userId not in readBy list, marking as read');
+          readBy.add(userId);
+          batch.update(doc.reference, {
+            'readBy': readBy,
+            'readTimestamp': now, // Add server timestamp when message is read
+          });
+
+          updatedCount++;
+          print('Marking message ${doc.id} as read by $userId');
+        } else {
+          print('Message ${doc.id} already read by $userId');
+        }
+      }
+
+      if (updatedCount > 0) {
+        await batch.commit();
+        print('Successfully marked $updatedCount messages as read');
+      } else {
+        print('No new messages to mark as read');
+      }
     } catch (e) {
       print('Error marking messages as read: $e');
+      print('Stack trace: ${StackTrace.current}');
     }
   }
 
@@ -344,45 +395,39 @@ class ChatService {
       return Stream.value([]);
     }
 
-    return _firestore
+    // Create a stream that will give us new messages
+    final messagesStream = _firestore
         .collection('chats')
         .doc(chatId)
         .collection('messages')
         .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snapshot) {
+        .snapshots();
+
+    // Create a stream that will update read status
+    final chatStream = _firestore.collection('chats').doc(chatId).snapshots();
+
+    // Combine both streams to ensure we get updates when either messages or read statuses change
+    return messagesStream.map((snapshot) {
+      print('Message stream updated with ${snapshot.docs.length} messages');
+
       return snapshot.docs.map((doc) {
         try {
           final data = doc.data();
-          DateTime timestamp;
 
-          // Safely handle the timestamp conversion
-          if (data['timestamp'] is Timestamp) {
-            timestamp = (data['timestamp'] as Timestamp).toDate();
-          } else if (data['timestamp'] is DateTime) {
-            timestamp = data['timestamp'] as DateTime;
-          } else {
-            // If timestamp is missing or in an unexpected format, use current time
-            timestamp = DateTime.now();
+          // Add document ID to the data for better message identification
+          final Map<String, dynamic> messageData = {
+            ...data,
+            'id': doc.id, // Ensure ID is always available
+          };
+
+          // Create message from JSON data and print debug info for read status
+          final message = Message.fromJson(messageData, currentUserId);
+          if (message.isMe) {
+            print(
+                'Message ${message.id} status: ${message.isRead ? 'READ' : 'UNREAD'}, readBy: ${messageData['readBy']}');
           }
 
-          // Safely handle the readBy field
-          List<dynamic> readByList = [];
-          if (data['readBy'] != null) {
-            if (data['readBy'] is List) {
-              readByList = data['readBy'];
-            }
-          }
-
-          return Message(
-            id: doc.id,
-            sender: data['senderId'] ?? '',
-            text: data['content'] ?? '',
-            timestamp: timestamp,
-            isMe: data['senderId'] == currentUserId,
-            isRead: readByList.contains(currentUserId),
-            type: data['type'] ?? 'text',
-          );
+          return message;
         } catch (e) {
           // Log the error but return a default message to avoid breaking the UI
           print('Error processing message document ${doc.id}: $e');
