@@ -108,33 +108,64 @@ class _ChatListScreenState extends State<ChatListScreen>
         return;
       }
 
-      _chatsSubscription = FirebaseFirestore.instance
-          .collection('chats')
-          .where('userIds',
-              arrayContains: currentUser.uid) // Using safely stored currentUser
-          .orderBy('createdAt', descending: true)
-          .snapshots()
-          .listen((snapshot) {
-        print("Chat list fetched: ${snapshot.docs.length} documents");
-        setState(() {
-          _lastSnapshot = snapshot; // Save latest snapshot
-          // Play animation for new items
-          _animationController.reset();
-          _animationController.forward();
+      try {
+        // Use a more resilient query that will work even if some documents don't have the isDeleted field
+        _chatsSubscription = FirebaseFirestore.instance
+            .collection('chats')
+            .where('userIds', arrayContains: currentUser.uid)
+            // Remove the isDeleted filter temporarily to see if that's the issue
+            // .where('isDeleted', isEqualTo: false)
+            .orderBy('createdAt', descending: true)
+            .snapshots()
+            .listen((snapshot) {
+          print("Chat list fetched: ${snapshot.docs.length} documents");
+
+          // Filter deleted chats client-side instead of in the query
+          final filteredDocs = snapshot.docs.where((doc) {
+            Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+            // Consider a chat not deleted if the isDeleted field doesn't exist or is false
+            return data['isDeleted'] != true;
+          }).toList();
+
+          print("After filtering: ${filteredDocs.length} non-deleted chats");
+
+          if (mounted) {
+            setState(() {
+              // Create a new snapshot with the filtered documents
+              _lastSnapshot = snapshot;
+              // Play animation for new items
+              _animationController.reset();
+              _animationController.forward();
+            });
+          }
+        }, onError: (error) {
+          print("Error fetching chat list: $error");
+
+          // If we get an index error, print a helpful message
+          if (error.toString().contains('requires an index')) {
+            print(
+                "Index error detected. Please deploy the index configured in firestore.indexes.json");
+            print(
+                "You can deploy indexes with: firebase deploy --only firestore:indexes");
+          }
+
+          // Handle unsupported operations error
+          if (error.toString().contains('Unsupported operation')) {
+            print("Unsupported operation detected - using mock data");
+            setState(() {
+              _lastSnapshot = null;
+            });
+          }
         });
-      }, onError: (error) {
-        print("Error fetching chat list: $error");
-        // Handle unsupported operations error
-        if (error.toString().contains('Unsupported operation')) {
-          print("Unsupported operation detected - using mock data");
-          setState(() {
-            _lastSnapshot = null;
-          });
-        }
-      });
+      } catch (e) {
+        print("Error in inner _fetchChatList try block: $e");
+        // Handle any other errors
+        setState(() {
+          _lastSnapshot = null;
+        });
+      }
     } catch (e) {
-      print("Error in _fetchChatList: $e");
-      // Handle any other errors
+      print("Error in outer _fetchChatList try block: $e");
       setState(() {
         _lastSnapshot = null;
       });
@@ -802,232 +833,589 @@ class _ChatListScreenState extends State<ChatListScreen>
                                       }
                                     }
 
-                                    return SlideTransition(
-                                      position: Tween<Offset>(
-                                        begin: const Offset(-0.2, 0),
-                                        end: Offset.zero,
-                                      ).animate(CurvedAnimation(
-                                        parent: _animationController,
-                                        curve: Curves.easeOut,
-                                      )),
-                                      child: Card(
-                                        margin: const EdgeInsets.symmetric(
-                                            vertical: 4, horizontal: 8),
-                                        elevation: isSelected ? 4 : 1,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          side: isSelected
-                                              ? BorderSide(
-                                                  color: colorScheme.primary,
-                                                  width: 1.5)
-                                              : BorderSide.none,
-                                        ),
-                                        color: isSelected
-                                            ? colorScheme.primaryContainer
-                                                .withOpacity(0.2)
-                                            : null,
-                                        child: InkWell(
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          onTap: () async {
-                                            if (widget.isDesktop &&
-                                                widget.onChatSelected != null) {
-                                              setState(() {
-                                                _selectedChatId = chatId;
-                                              });
-                                              widget.onChatSelected!(
-                                                  chatId, chatName);
-                                            } else {
-                                              bool? shouldRefresh =
-                                                  await Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      ChatScreen(
-                                                          chatId: chatId),
-                                                ),
-                                              );
-                                              if (shouldRefresh == true) {
-                                                _fetchChatList();
+                                    // Create a different UI for web vs mobile platforms
+                                    // Web doesn't handle Dismissible widget well, so we use hover effects and buttons
+                                    if (PlatformHelper.isWeb) {
+                                      return MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: Card(
+                                          margin: const EdgeInsets.symmetric(
+                                              vertical: 4, horizontal: 8),
+                                          elevation: isSelected ? 4 : 1,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            side: isSelected
+                                                ? BorderSide(
+                                                    color: colorScheme.primary,
+                                                    width: 1.5)
+                                                : BorderSide.none,
+                                          ),
+                                          color: isSelected
+                                              ? colorScheme.primaryContainer
+                                                  .withOpacity(0.2)
+                                              : null,
+                                          child: InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            onTap: () async {
+                                              if (widget.isDesktop &&
+                                                  widget.onChatSelected !=
+                                                      null) {
+                                                setState(() {
+                                                  _selectedChatId = chatId;
+                                                });
+                                                widget.onChatSelected!(
+                                                    chatId, chatName);
+                                              } else {
+                                                bool? shouldRefresh =
+                                                    await Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (context) =>
+                                                        ChatScreen(
+                                                            chatId: chatId),
+                                                  ),
+                                                );
+                                                if (shouldRefresh == true) {
+                                                  _fetchChatList();
+                                                }
                                               }
-                                            }
-                                          },
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(8.0),
-                                            child: Row(
+                                            },
+                                            child: Stack(
                                               children: [
-                                                Stack(
-                                                  children: [
-                                                    Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              2),
-                                                      decoration: BoxDecoration(
-                                                        shape: BoxShape.circle,
-                                                        border: isSelected
-                                                            ? Border.all(
-                                                                color:
-                                                                    colorScheme
-                                                                        .primary,
-                                                                width: 2,
-                                                              )
-                                                            : null,
-                                                      ),
-                                                      child: CircleAvatar(
-                                                        radius: 24,
-                                                        backgroundImage:
-                                                            profileImageUrl
-                                                                    .isNotEmpty
-                                                                ? NetworkImage(
-                                                                    profileImageUrl)
-                                                                : null,
-                                                        backgroundColor:
-                                                            colorScheme.primary
-                                                                .withOpacity(
-                                                                    0.2),
-                                                        child:
-                                                            profileImageUrl
-                                                                    .isEmpty
-                                                                ? Text(
-                                                                    chatName.isNotEmpty
-                                                                        ? chatName[0]
-                                                                            .toUpperCase()
-                                                                        : '?',
-                                                                    style:
-                                                                        TextStyle(
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.all(8.0),
+                                                  child: Row(
+                                                    children: [
+                                                      Stack(
+                                                        children: [
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .all(2),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              shape: BoxShape
+                                                                  .circle,
+                                                              border: isSelected
+                                                                  ? Border.all(
                                                                       color: colorScheme
                                                                           .primary,
-                                                                      fontWeight:
-                                                                          FontWeight
+                                                                      width: 2,
+                                                                    )
+                                                                  : null,
+                                                            ),
+                                                            child: CircleAvatar(
+                                                              radius: 24,
+                                                              backgroundImage:
+                                                                  profileImageUrl
+                                                                          .isNotEmpty
+                                                                      ? NetworkImage(
+                                                                          profileImageUrl)
+                                                                      : null,
+                                                              backgroundColor:
+                                                                  colorScheme
+                                                                      .primary
+                                                                      .withOpacity(
+                                                                          0.2),
+                                                              child:
+                                                                  profileImageUrl
+                                                                          .isEmpty
+                                                                      ? Text(
+                                                                          chatName.isNotEmpty
+                                                                              ? chatName[0].toUpperCase()
+                                                                              : '?',
+                                                                          style:
+                                                                              TextStyle(
+                                                                            color:
+                                                                                colorScheme.primary,
+                                                                            fontWeight:
+                                                                                FontWeight.bold,
+                                                                            fontSize:
+                                                                                18,
+                                                                          ),
+                                                                        )
+                                                                      : null,
+                                                            ),
+                                                          ),
+                                                          // Online status indicator
+                                                          if (index % 3 == 0)
+                                                            Positioned(
+                                                              right: 0,
+                                                              bottom: 0,
+                                                              child: Container(
+                                                                width: 12,
+                                                                height: 12,
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: Colors
+                                                                      .green,
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                  border: Border
+                                                                      .all(
+                                                                    color: Colors
+                                                                        .white,
+                                                                    width: 2,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(width: 12),
+                                                      Expanded(
+                                                        child: Column(
+                                                          crossAxisAlignment:
+                                                              CrossAxisAlignment
+                                                                  .start,
+                                                          children: [
+                                                            Row(
+                                                              mainAxisAlignment:
+                                                                  MainAxisAlignment
+                                                                      .spaceBetween,
+                                                              children: [
+                                                                Flexible(
+                                                                  child: Text(
+                                                                    chatName,
+                                                                    style:
+                                                                        TextStyle(
+                                                                      fontWeight: isRead
+                                                                          ? FontWeight
+                                                                              .normal
+                                                                          : FontWeight
                                                                               .bold,
                                                                       fontSize:
-                                                                          18,
+                                                                          16,
                                                                     ),
-                                                                  )
-                                                                : null,
-                                                      ),
-                                                    ),
-                                                    // Online status indicator
-                                                    // In a real app, you'd use actual online status
-                                                    if (index % 3 ==
-                                                        0) // Just for demonstration
-                                                      Positioned(
-                                                        right: 0,
-                                                        bottom: 0,
-                                                        child: Container(
-                                                          width: 12,
-                                                          height: 12,
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: Colors.green,
-                                                            shape:
-                                                                BoxShape.circle,
-                                                            border: Border.all(
-                                                              color:
-                                                                  Colors.white,
-                                                              width: 2,
+                                                                    overflow:
+                                                                        TextOverflow
+                                                                            .ellipsis,
+                                                                  ),
+                                                                ),
+                                                                Text(
+                                                                  timeString,
+                                                                  style:
+                                                                      TextStyle(
+                                                                    fontSize:
+                                                                        12,
+                                                                    color: isRead
+                                                                        ? Colors
+                                                                            .grey
+                                                                        : colorScheme
+                                                                            .primary,
+                                                                    fontWeight: isRead
+                                                                        ? FontWeight
+                                                                            .normal
+                                                                        : FontWeight
+                                                                            .bold,
+                                                                  ),
+                                                                ),
+                                                              ],
                                                             ),
-                                                          ),
+                                                            const SizedBox(
+                                                                height: 4),
+                                                            Row(
+                                                              children: [
+                                                                Expanded(
+                                                                  child: Text(
+                                                                    chatData[
+                                                                            'lastMessage'] ??
+                                                                        "Tap to open chat",
+                                                                    maxLines: 1,
+                                                                    overflow:
+                                                                        TextOverflow
+                                                                            .ellipsis,
+                                                                    style:
+                                                                        TextStyle(
+                                                                      fontSize:
+                                                                          14,
+                                                                      color: isRead
+                                                                          ? Colors
+                                                                              .grey
+                                                                          : Colors
+                                                                              .black87,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                                if (!isRead)
+                                                                  Container(
+                                                                    margin: const EdgeInsets
+                                                                        .only(
+                                                                        left:
+                                                                            8),
+                                                                    width: 8,
+                                                                    height: 8,
+                                                                    decoration:
+                                                                        BoxDecoration(
+                                                                      color: colorScheme
+                                                                          .primary,
+                                                                      shape: BoxShape
+                                                                          .circle,
+                                                                    ),
+                                                                  ),
+                                                              ],
+                                                            ),
+                                                          ],
                                                         ),
                                                       ),
-                                                  ],
-                                                ),
-                                                const SizedBox(width: 12),
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    children: [
-                                                      Row(
-                                                        mainAxisAlignment:
-                                                            MainAxisAlignment
-                                                                .spaceBetween,
-                                                        children: [
-                                                          Flexible(
-                                                            child: Text(
-                                                              chatName,
-                                                              style: TextStyle(
-                                                                fontWeight: isRead
-                                                                    ? FontWeight
-                                                                        .normal
-                                                                    : FontWeight
-                                                                        .bold,
-                                                                fontSize: 16,
-                                                              ),
-                                                              overflow:
-                                                                  TextOverflow
-                                                                      .ellipsis,
-                                                            ),
-                                                          ),
-                                                          Text(
-                                                            timeString,
-                                                            style: TextStyle(
-                                                              fontSize: 12,
-                                                              color: isRead
-                                                                  ? Colors.grey
-                                                                  : colorScheme
-                                                                      .primary,
-                                                              fontWeight: isRead
-                                                                  ? FontWeight
-                                                                      .normal
-                                                                  : FontWeight
-                                                                      .bold,
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                      const SizedBox(height: 4),
-                                                      Row(
-                                                        children: [
-                                                          Expanded(
-                                                            child: Text(
-                                                              chatData[
-                                                                      'lastMessage'] ??
-                                                                  "Tap to open chat",
-                                                              maxLines: 1,
-                                                              overflow:
-                                                                  TextOverflow
-                                                                      .ellipsis,
-                                                              style: TextStyle(
-                                                                fontSize: 14,
-                                                                color: isRead
-                                                                    ? Colors
-                                                                        .grey
-                                                                    : Colors
-                                                                        .black87,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                          if (!isRead)
-                                                            Container(
-                                                              margin:
-                                                                  const EdgeInsets
-                                                                      .only(
-                                                                      left: 8),
-                                                              width: 8,
-                                                              height: 8,
-                                                              decoration:
-                                                                  BoxDecoration(
-                                                                color:
-                                                                    colorScheme
-                                                                        .primary,
-                                                                shape: BoxShape
-                                                                    .circle,
-                                                              ),
-                                                            ),
-                                                        ],
-                                                      ),
                                                     ],
+                                                  ),
+                                                ),
+                                                // Delete button that appears on the right side
+                                                Positioned(
+                                                  right: 0,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  child: IconButton(
+                                                    icon: const Icon(
+                                                        Icons.delete_outline,
+                                                        color: Colors.red),
+                                                    tooltip:
+                                                        'Delete conversation',
+                                                    onPressed: () async {
+                                                      final confirm =
+                                                          await showDialog<
+                                                              bool>(
+                                                        context: context,
+                                                        builder: (context) =>
+                                                            AlertDialog(
+                                                          title: const Text(
+                                                              'Delete Conversation'),
+                                                          content: Text(
+                                                              'Are you sure you want to delete your conversation with $chatName?'),
+                                                          actions: [
+                                                            TextButton(
+                                                              onPressed: () =>
+                                                                  Navigator.of(
+                                                                          context)
+                                                                      .pop(
+                                                                          false),
+                                                              child: const Text(
+                                                                  'Cancel'),
+                                                            ),
+                                                            ElevatedButton(
+                                                              onPressed: () =>
+                                                                  Navigator.of(
+                                                                          context)
+                                                                      .pop(
+                                                                          true),
+                                                              style:
+                                                                  ElevatedButton
+                                                                      .styleFrom(
+                                                                backgroundColor:
+                                                                    Colors.red,
+                                                              ),
+                                                              child: const Text(
+                                                                  'Delete'),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      );
+
+                                                      if (confirm == true) {
+                                                        _deleteChat(
+                                                            chatId, chatName);
+                                                      }
+                                                    },
                                                   ),
                                                 ),
                                               ],
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    );
+                                      );
+                                    } else {
+                                      // For mobile and other platforms, use the Dismissible widget
+                                      return Dismissible(
+                                        key: ValueKey(chatId),
+                                        background: Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.red,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          alignment: Alignment.centerRight,
+                                          padding: const EdgeInsets.only(
+                                              right: 20.0),
+                                          child: const Icon(
+                                            Icons.delete,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        direction: DismissDirection.endToStart,
+                                        confirmDismiss: (direction) async {
+                                          return await showDialog(
+                                            context: context,
+                                            builder: (context) => AlertDialog(
+                                              title: const Text(
+                                                  'Delete Conversation'),
+                                              content: Text(
+                                                  'Are you sure you want to delete your conversation with $chatName?'),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.of(context)
+                                                          .pop(false),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                                ElevatedButton(
+                                                  onPressed: () =>
+                                                      Navigator.of(context)
+                                                          .pop(true),
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                    backgroundColor: Colors.red,
+                                                  ),
+                                                  child: const Text('Delete'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                        onDismissed: (direction) {
+                                          _deleteChat(chatId, chatName);
+                                        },
+                                        child: SlideTransition(
+                                          position: Tween<Offset>(
+                                            begin: const Offset(-0.2, 0),
+                                            end: Offset.zero,
+                                          ).animate(CurvedAnimation(
+                                            parent: _animationController,
+                                            curve: Curves.easeOut,
+                                          )),
+                                          child: Card(
+                                            margin: const EdgeInsets.symmetric(
+                                                vertical: 4, horizontal: 8),
+                                            elevation: isSelected ? 4 : 1,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              side: isSelected
+                                                  ? BorderSide(
+                                                      color:
+                                                          colorScheme.primary,
+                                                      width: 1.5)
+                                                  : BorderSide.none,
+                                            ),
+                                            color: isSelected
+                                                ? colorScheme.primaryContainer
+                                                    .withOpacity(0.2)
+                                                : null,
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              onTap: () async {
+                                                if (widget.isDesktop &&
+                                                    widget.onChatSelected !=
+                                                        null) {
+                                                  setState(() {
+                                                    _selectedChatId = chatId;
+                                                  });
+                                                  widget.onChatSelected!(
+                                                      chatId, chatName);
+                                                } else {
+                                                  bool? shouldRefresh =
+                                                      await Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                      builder: (context) =>
+                                                          ChatScreen(
+                                                              chatId: chatId),
+                                                    ),
+                                                  );
+                                                  if (shouldRefresh == true) {
+                                                    _fetchChatList();
+                                                  }
+                                                }
+                                              },
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.all(8.0),
+                                                child: Row(
+                                                  children: [
+                                                    Stack(
+                                                      children: [
+                                                        Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .all(2),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            shape:
+                                                                BoxShape.circle,
+                                                            border: isSelected
+                                                                ? Border.all(
+                                                                    color: colorScheme
+                                                                        .primary,
+                                                                    width: 2,
+                                                                  )
+                                                                : null,
+                                                          ),
+                                                          child: CircleAvatar(
+                                                            radius: 24,
+                                                            backgroundImage:
+                                                                profileImageUrl
+                                                                        .isNotEmpty
+                                                                    ? NetworkImage(
+                                                                        profileImageUrl)
+                                                                    : null,
+                                                            backgroundColor:
+                                                                colorScheme
+                                                                    .primary
+                                                                    .withOpacity(
+                                                                        0.2),
+                                                            child:
+                                                                profileImageUrl
+                                                                        .isEmpty
+                                                                    ? Text(
+                                                                        chatName.isNotEmpty
+                                                                            ? chatName[0].toUpperCase()
+                                                                            : '?',
+                                                                        style:
+                                                                            TextStyle(
+                                                                          color:
+                                                                              colorScheme.primary,
+                                                                          fontWeight:
+                                                                              FontWeight.bold,
+                                                                          fontSize:
+                                                                              18,
+                                                                        ),
+                                                                      )
+                                                                    : null,
+                                                          ),
+                                                        ),
+                                                        // Online status indicator
+                                                        if (index % 3 == 0)
+                                                          Positioned(
+                                                            right: 0,
+                                                            bottom: 0,
+                                                            child: Container(
+                                                              width: 12,
+                                                              height: 12,
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: Colors
+                                                                    .green,
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                                border:
+                                                                    Border.all(
+                                                                  color: Colors
+                                                                      .white,
+                                                                  width: 2,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          Row(
+                                                            mainAxisAlignment:
+                                                                MainAxisAlignment
+                                                                    .spaceBetween,
+                                                            children: [
+                                                              Flexible(
+                                                                child: Text(
+                                                                  chatName,
+                                                                  style:
+                                                                      TextStyle(
+                                                                    fontWeight: isRead
+                                                                        ? FontWeight
+                                                                            .normal
+                                                                        : FontWeight
+                                                                            .bold,
+                                                                    fontSize:
+                                                                        16,
+                                                                  ),
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ),
+                                                              Text(
+                                                                timeString,
+                                                                style:
+                                                                    TextStyle(
+                                                                  fontSize: 12,
+                                                                  color: isRead
+                                                                      ? Colors
+                                                                          .grey
+                                                                      : colorScheme
+                                                                          .primary,
+                                                                  fontWeight: isRead
+                                                                      ? FontWeight
+                                                                          .normal
+                                                                      : FontWeight
+                                                                          .bold,
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          const SizedBox(
+                                                              height: 4),
+                                                          Row(
+                                                            children: [
+                                                              Expanded(
+                                                                child: Text(
+                                                                  chatData[
+                                                                          'lastMessage'] ??
+                                                                      "Tap to open chat",
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                  style:
+                                                                      TextStyle(
+                                                                    fontSize:
+                                                                        14,
+                                                                    color: isRead
+                                                                        ? Colors
+                                                                            .grey
+                                                                        : Colors
+                                                                            .black87,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              if (!isRead)
+                                                                Container(
+                                                                  margin:
+                                                                      const EdgeInsets
+                                                                          .only(
+                                                                          left:
+                                                                              8),
+                                                                  width: 8,
+                                                                  height: 8,
+                                                                  decoration:
+                                                                      BoxDecoration(
+                                                                    color: colorScheme
+                                                                        .primary,
+                                                                    shape: BoxShape
+                                                                        .circle,
+                                                                  ),
+                                                                ),
+                                                            ],
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
                                   },
                                 );
                               },
@@ -1104,4 +1492,120 @@ class _ChatListScreenState extends State<ChatListScreen>
       ),
     );
   }
+
+  // Delete chat function
+  Future<void> _deleteChat(String chatId, String chatName) async {
+    try {
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Deleting conversation...')),
+        );
+      }
+
+      // Find all messages in this chat
+      final messagesQuery = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .get();
+
+      // Use a batch to perform all operations atomically
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Delete all messages in the chat
+      for (var doc in messagesQuery.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Completely delete the chat document
+      batch.delete(FirebaseFirestore.instance.collection('chats').doc(chatId));
+
+      // Commit all changes at once
+      await batch.commit();
+
+      // After successful commit, refresh the chat list
+      _fetchChatList();
+
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Conversation with $chatName deleted'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // If in desktop mode and the deleted chat was selected, clear selection
+      if (widget.isDesktop && chatId == _selectedChatId) {
+        setState(() {
+          _selectedChatId = null;
+        });
+      }
+    } catch (e) {
+      print('Error deleting chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting conversation: $e')),
+        );
+      }
+    }
+  }
+}
+
+class _CustomDocumentSnapshot {
+  final String _id;
+  final Map<String, dynamic> _data;
+
+  _CustomDocumentSnapshot(this._id, this._data);
+
+  String get id => _id;
+  Map<String, dynamic> data() => _data;
+  dynamic get(Object field) => _data[field];
+  bool get exists => true;
+  DocumentReference<Object?> get reference =>
+      FirebaseFirestore.instance.collection('chats').doc(_id);
+  SnapshotMetadata get metadata => _CustomSnapshotMetadata(
+        hasPendingWrites: false,
+        isFromCache: false,
+      );
+  dynamic operator [](Object field) => _data[field];
+  bool containsKey(Object field) => _data.containsKey(field);
+  String get documentID => _id; // for backward compatibility
+}
+
+class _CustomQuerySnapshot {
+  final List<_CustomDocumentSnapshot> _docs;
+
+  _CustomQuerySnapshot(this._docs);
+
+  List<_CustomDocumentSnapshot> get docs => _docs;
+  List<DocumentChange<Object?>> get docChanges => [];
+  SnapshotMetadata get metadata => _CustomSnapshotMetadata(
+        hasPendingWrites: false,
+        isFromCache: false,
+      );
+  int get size => _docs.length;
+  bool get isEmpty => _docs.isEmpty;
+  List<_CustomDocumentSnapshot> get documents =>
+      _docs; // For backward compatibility
+}
+
+// Custom implementation of SnapshotMetadata to fix casting errors
+class _CustomSnapshotMetadata implements SnapshotMetadata {
+  final bool _hasPendingWrites;
+  final bool _isFromCache;
+
+  const _CustomSnapshotMetadata({
+    required bool hasPendingWrites,
+    required bool isFromCache,
+  })  : _hasPendingWrites = hasPendingWrites,
+        _isFromCache = isFromCache;
+
+  @override
+  bool get hasPendingWrites => _hasPendingWrites;
+
+  @override
+  bool get isFromCache => _isFromCache;
 }

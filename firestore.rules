@@ -51,7 +51,13 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow create: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds;
         allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds;
-        allow delete: if isAuthenticated() && request.auth.uid == resource.data.senderId;
+        // Updated to allow any chat member to delete messages when clearing chat history
+        allow delete: if isAuthenticated() && (
+          // The sender can always delete their own messages
+          request.auth.uid == resource.data.senderId || 
+          // Any chat member can delete messages when batch deleting
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds
+        );
       }
       
       // ✅ Typing status subcollection
@@ -100,6 +106,28 @@ service cloud.firestore {
       
       // Only the owner can delete their stories
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // ✅ Active Stories Collection (NEW)
+    match /activeStories/{userId} {
+      // Anyone who is authenticated can read active stories
+      allow read: if isAuthenticated();
+      
+      // Only the story owner can create or update their active story record
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Only the owner can delete their active story record
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ✅ Story Views Collection (NEW)
+    match /storyViews/{viewId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.viewerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        request.auth.uid == resource.data.storyOwnerId || 
+        request.auth.uid == resource.data.viewerId
+      );
     }
 
     // ✅ Notifications Collection (Push Notifications)

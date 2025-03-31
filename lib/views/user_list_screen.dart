@@ -20,6 +20,9 @@ class _UserListScreenState extends State<UserListScreen> {
   Timer? _debounce;
   // Keep track of pending friend requests
   Map<String, String> _pendingRequests = {};
+  // Track users we're currently creating chats with to prevent duplicates
+  Set<String> _processingChatUsers = {};
+  bool _isCreatingChat = false;
 
   @override
   void initState() {
@@ -202,6 +205,19 @@ class _UserListScreenState extends State<UserListScreen> {
                               ),
                             );
                           } else {
+                            if (_processingChatUsers.contains(userId)) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Chat creation in progress. Please wait.'),
+                                ),
+                              );
+                              return;
+                            }
+                            _processingChatUsers.add(userId);
+                            setState(() {
+                              _isCreatingChat = true;
+                            });
                             try {
                               // Create new chat
                               String? chatId = await _chatService.createChat(
@@ -233,6 +249,11 @@ class _UserListScreenState extends State<UserListScreen> {
                                   backgroundColor: Colors.red,
                                 ),
                               );
+                            } finally {
+                              _processingChatUsers.remove(userId);
+                              setState(() {
+                                _isCreatingChat = false;
+                              });
                             }
                           }
                         },
