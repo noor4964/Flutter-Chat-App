@@ -18,6 +18,84 @@ class _UserListScreenState extends State<UserListScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _searchResults = [];
   Timer? _debounce;
+  // Keep track of pending friend requests
+  Map<String, String> _pendingRequests = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPendingRequests();
+  }
+
+  Future<void> _loadPendingRequests() async {
+    if (user == null) return;
+
+    try {
+      // Get requests sent by current user that are still pending
+      final sentRequests = await FirebaseFirestore.instance
+          .collection('connections')
+          .where('senderId', isEqualTo: user!.uid)
+          .where('status', isEqualTo: 'pending')
+          .get();
+
+      Map<String, String> pendingRequests = {};
+      for (var doc in sentRequests.docs) {
+        final data = doc.data();
+        pendingRequests[data['receiverId']] = doc.id;
+      }
+
+      if (mounted) {
+        setState(() {
+          _pendingRequests = pendingRequests;
+        });
+      }
+    } catch (e) {
+      print('Error loading pending requests: $e');
+    }
+  }
+
+  Future<void> _sendConnectionRequest(String userId, String username) async {
+    if (_pendingRequests.containsKey(userId)) {
+      // Request already exists, cancel it
+      try {
+        await FirebaseFirestore.instance
+            .collection('connections')
+            .doc(_pendingRequests[userId])
+            .delete();
+
+        setState(() {
+          _pendingRequests.remove(userId);
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Request to $username cancelled')),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error cancelling request: $e')),
+        );
+      }
+    } else {
+      // Send new request
+      try {
+        final docRef = await _authService.sendConnectionRequest(userId);
+
+        if (docRef != null) {
+          setState(() {
+            _pendingRequests[userId] = docRef;
+          });
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Request sent to $username')),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error sending request: $e')),
+        );
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -86,14 +164,20 @@ class _UserListScreenState extends State<UserListScreen> {
                         leading: CircleAvatar(
                             child: Text(searchedUser['username'][0])),
                         trailing: IconButton(
-                          icon: const Icon(Icons.person_add),
+                          icon: Icon(
+                            _pendingRequests.containsKey(userId)
+                                ? Icons.cancel_outlined
+                                : Icons.person_add,
+                            color: _pendingRequests.containsKey(userId)
+                                ? Colors.red
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                          tooltip: _pendingRequests.containsKey(userId)
+                              ? 'Cancel Request'
+                              : 'Add Friend',
                           onPressed: () async {
-                            await _authService.sendConnectionRequest(userId);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                  content: Text(
-                                      'Request sent to ${searchedUser['username']}')),
-                            );
+                            await _sendConnectionRequest(
+                                userId, searchedUser['username']);
                           },
                         ),
                         onTap: () async {

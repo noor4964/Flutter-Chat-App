@@ -216,15 +216,31 @@ class AuthService {
   }
 
   // Send connection request
-  Future<void> sendConnectionRequest(String receiverId) async {
+  Future<String?> sendConnectionRequest(String receiverId) async {
     String senderId = _auth.currentUser!.uid;
 
-    await _firestore.collection('connections').add({
+    // Check if a request already exists
+    QuerySnapshot existingRequests = await _firestore
+        .collection('connections')
+        .where('senderId', isEqualTo: senderId)
+        .where('receiverId', isEqualTo: receiverId)
+        .where('status', isEqualTo: 'pending')
+        .get();
+
+    // If request already exists, return its ID
+    if (existingRequests.docs.isNotEmpty) {
+      return existingRequests.docs.first.id;
+    }
+
+    // Otherwise create a new request
+    DocumentReference docRef = await _firestore.collection('connections').add({
       'senderId': senderId,
       'receiverId': receiverId,
       'status': 'pending',
       'timestamp': FieldValue.serverTimestamp(),
     });
+
+    return docRef.id;
   }
 
   // Accept connection request and create chat

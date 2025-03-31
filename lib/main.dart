@@ -14,6 +14,7 @@ import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
+import 'package:flutter_chat_app/views/user_list_screen.dart';
 
 import 'services/story_service.dart';
 
@@ -107,6 +108,9 @@ class MyApp extends StatelessWidget {
         home: const AuthenticationWrapper(),
         navigatorObservers: [MyNavigatorObserver()],
         debugShowCheckedModeBanner: false,
+        routes: {
+          '/user_list': (context) => UserListScreen(),
+        },
         builder: (context, child) {
           // Enable error dialogs after app is built
           _errorHandler.suppressDialogs(false);

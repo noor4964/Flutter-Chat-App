@@ -14,6 +14,7 @@ import 'package:flutter_chat_app/views/create_story_screen.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
+import 'package:flutter_chat_app/views/friends_profile_screen.dart';
 
 class MessengerHomeScreen extends StatefulWidget {
   final bool isDesktop;
@@ -1045,6 +1046,17 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               badge: _friendRequestCount > 0
                   ? _friendRequestCount.toString()
                   : null,
+            ),
+            _buildMenuItem(
+              icon: Icons.people,
+              title: 'Friends',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const FriendsProfileScreen()),
+                );
+              },
             ),
           ]),
 
