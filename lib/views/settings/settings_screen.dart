@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/notification_service.dart';
 import 'package:flutter_chat_app/services/settings_service.dart';
+import 'package:flutter_chat_app/views/settings/notifications_settings.dart';
 
 class SettingsScreen extends StatefulWidget {
   @override
@@ -437,6 +438,22 @@ class _SettingsScreenState extends State<SettingsScreen>
                                   });
                                 }
                               : null, // Disable if notifications are off
+                        ),
+                        ListTile(
+                          leading: Icon(Icons.settings_applications,
+                              color: iconColor),
+                          title: const Text('Notification Settings'),
+                          subtitle: const Text(
+                              'Advanced notification options and testing'),
+                          trailing: Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    const NotificationSettingsScreen(),
+                              ),
+                            );
+                          },
                         ),
                       ]),
 

@@ -4,7 +4,9 @@ import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
+import 'package:flutter_chat_app/services/notification_service.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/services/presence_service.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
@@ -18,6 +20,9 @@ import 'package:flutter_chat_app/views/user_list_screen.dart';
 
 import 'services/story_service.dart';
 
+// Define global navigatorKey for push notifications
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -25,18 +30,21 @@ void main() async {
   try {
     await FirebaseConfig.initializeFirebase();
 
-    // Verify Firestore connection by making a simple query
-    print('🔍 Verifying Firestore connection...');
-    await FirebaseConfig
-        .clearFirestoreCache(); // Clear cache to prevent assertion errors
-
     // Create error handler immediately
     final errorHandler = FirebaseErrorHandler();
     errorHandler.suppressDialogs(true); // Prevent dialogs during startup
 
-    // Initialize CallKit plugin for handling calls
-    if (!PlatformHelper.isDesktop) {
+    // Only initialize platform-specific features on supported platforms
+    if (PlatformHelper.isIOS || PlatformHelper.isAndroid) {
+      // Initialize CallKit plugin for handling calls only on iOS/Android
       await _initCallKit();
+
+      // Initialize the notification service
+      final notificationService = NotificationService();
+      await notificationService.initialize();
+    } else {
+      print(
+          'ℹ️ Skipping CallKit and notification initialization on ${PlatformHelper.isWeb ? 'web' : PlatformHelper.isDesktop ? 'desktop' : 'unknown'} platform');
     }
   } catch (e) {
     print('❌ Error during app initialization: $e');
@@ -57,9 +65,17 @@ void main() async {
 
 // Initialize CallKit for handling incoming/outgoing calls
 Future<void> _initCallKit() async {
+  // Skip if not on iOS or Android
+  if (!PlatformHelper.isIOS && !PlatformHelper.isAndroid) {
+    print('ℹ️ Skipping CallKit initialization on non-mobile platform');
+    return;
+  }
+
   try {
     // Set up CallKit event listeners
     FlutterCallkitIncoming.onEvent.listen((event) async {
+      if (event == null) return;
+
       final Map<String, dynamic> callEvent = event as Map<String, dynamic>;
       print('CallKit event: ${callEvent['event']}');
 
@@ -103,6 +119,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<ThemeProvider>(builder: (context, themeProvider, child) {
       return MaterialApp(
+        navigatorKey:
+            navigatorKey, // Add global navigator key for notifications
         title: 'Flutter Chat App',
         theme: themeProvider.themeData,
         home: const AuthenticationWrapper(),
@@ -110,6 +128,9 @@ class MyApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         routes: {
           '/user_list': (context) => UserListScreen(),
+          '/chat': (context) => const MessengerHomeScreen(isDesktop: false),
+          '/requests': (context) => UserListScreen(),
+          '/home': (context) => const HomeScreen(),
         },
         builder: (context, child) {
           // Enable error dialogs after app is built
@@ -240,11 +261,38 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  // Add WidgetsBindingObserver to track app lifecycle
+
   @override
   void initState() {
     super.initState();
     _initializeCollections();
+    _initializePresence();
+
+    // Register lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    // Unregister lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    _setUserOffline();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // App in foreground - set user as online
+      _setUserOnline();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      // App in background or closed - set user as offline
+      _setUserOffline();
+    }
   }
 
   Future<void> _initializeCollections() async {
@@ -259,6 +307,38 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       print('❌ Error initializing collections: $e');
       // Error is handled within the services
+    }
+  }
+
+  // Initialize presence and set user online
+  Future<void> _initializePresence() async {
+    try {
+      // Import the presence service at the top of the file
+      final presenceService = PresenceService();
+      await presenceService.goOnline();
+      print('✅ User set to online');
+    } catch (e) {
+      print('❌ Error initializing presence: $e');
+    }
+  }
+
+  // Set user as online
+  Future<void> _setUserOnline() async {
+    try {
+      final presenceService = PresenceService();
+      await presenceService.goOnline();
+    } catch (e) {
+      print('❌ Error setting user online: $e');
+    }
+  }
+
+  // Set user as offline
+  Future<void> _setUserOffline() async {
+    try {
+      final presenceService = PresenceService();
+      await presenceService.goOffline();
+    } catch (e) {
+      print('❌ Error setting user offline: $e');
     }
   }
 

@@ -5,6 +5,8 @@ import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
 import '../services/firebase_config.dart';
 import 'package:flutter_chat_app/services/auth_service.dart';
+import 'package:flutter_chat_app/services/chat_notification_service.dart';
+import 'package:flutter_chat_app/services/presence_service.dart';
 
 class ChatService {
   // Expose auth service for Windows platform checks
@@ -77,12 +79,63 @@ class ChatService {
         print('Warning: Failed to clear typing status: $e');
       }
 
+      // Send notification to chat recipients who aren't currently in the chat
+      await _sendNotificationToRecipients(chatId, senderId, message);
+
       print('Message sent successfully to chat $chatId');
     } catch (e) {
       print('Error sending message: $e');
       // Added stack trace for better debugging
       print('Stack trace: ${StackTrace.current}');
       throw e;
+    }
+  }
+
+  // Helper method to send notification to chat recipients
+  Future<void> _sendNotificationToRecipients(
+      String chatId, String senderId, String message) async {
+    try {
+      // Get chat document to find all recipients
+      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
+      final chatData = chatDoc.data();
+
+      if (chatData == null) return;
+
+      // Get all user IDs in the chat
+      final List<String> userIds = List<String>.from(chatData['userIds'] ?? []);
+
+      // Get sender's username for the notification
+      String senderName = await getUsername(senderId);
+
+      // For each recipient (excluding sender)
+      for (String userId in userIds) {
+        if (userId != senderId) {
+          // Check if recipient is currently active in this chat
+          final presenceService = PresenceService();
+          bool isActive =
+              await presenceService.isUserActiveInChat(userId, chatId);
+
+          // Only send notification if user is not actively viewing the chat
+          if (!isActive) {
+            // Send notification
+            final notificationService = ChatNotificationService();
+            await notificationService.sendMessageNotification(
+                recipientId: userId,
+                senderId: senderId,
+                senderName: senderName,
+                message: message,
+                chatId: chatId);
+
+            print('Notification sent to $userId for message in chat $chatId');
+          } else {
+            print(
+                'User $userId is active in chat $chatId, no notification sent');
+          }
+        }
+      }
+    } catch (e) {
+      // Log but don't fail the message send process
+      print('Error sending notification: $e');
     }
   }
 

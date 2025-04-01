@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
+import 'package:flutter_chat_app/services/chat_notification_service.dart';
+import 'package:flutter_chat_app/services/presence_service.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
 import 'package:flutter_chat_app/widgets/message_bubble.dart';
 import 'package:flutter_chat_app/views/user_profile_screen.dart';
@@ -60,6 +62,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Set up a timer to periodically mark messages as read
     _setupMessageReadTimer();
 
+    // Update presence to show that user is in this chat
+    _updatePresence(true);
+
     // Initialize animation controller for send button
     _sendButtonAnimationController = AnimationController(
       vsync: this,
@@ -95,6 +100,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (user != null) {
       _chatService.setTypingStatus(widget.chatId, user!.uid, false);
     }
+
+    // Update presence to show that user is no longer in this chat
+    _updatePresence(false);
+
     _messageController.dispose();
     _scrollController.dispose();
     _sendButtonAnimationController.dispose();
@@ -103,6 +112,24 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _messageReadTimer?.cancel();
 
     super.dispose();
+  }
+
+  // Update user presence when entering or leaving a chat
+  Future<void> _updatePresence(bool inChat) async {
+    try {
+      final presenceService = PresenceService();
+      if (inChat) {
+        await presenceService.setActiveChat(widget.chatId);
+
+        // Also mark notifications as read for this chat
+        final notificationService = ChatNotificationService();
+        await notificationService.markChatNotificationsAsRead(widget.chatId);
+      } else {
+        await presenceService.clearActiveChat();
+      }
+    } catch (e) {
+      print('❌ Error updating presence: $e');
+    }
   }
 
   Future<void> _loadChatPersonDetails() async {

@@ -5,10 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FirebaseConfig {
-  // Add a static getter to check if Firebase is enabled on Windows
-  static bool get isFirebaseEnabledOnWindows =>
-      true; // Change to false to disable Firebase on Windows
-
   // Add a static getter to check if we are on web
   static bool get isWeb => kIsWeb;
 
@@ -18,64 +14,74 @@ class FirebaseConfig {
   // Add a getter to check if Firebase is initialized
   static bool get isInitialized => _initialized;
 
+  // Flag to determine if Firebase is enabled on Windows platform
+  static bool get isFirebaseEnabledOnWindows =>
+      true; // Set to false if you want to disable Firebase on Windows
+
   static Future<void> initializeFirebase() async {
     print('🔥 Starting Firebase initialization...');
 
     // Skip initialization if already initialized
-    if (_initialized || Firebase.apps.isNotEmpty) {
+    if (_initialized) {
       print('🔥 Firebase already initialized, skipping...');
+      return;
+    }
+
+    // Check if Firebase is already initialized
+    if (Firebase.apps.isNotEmpty) {
+      _initialized = true;
+      print('🔥 Firebase already has apps, skipping...');
       return;
     }
 
     FirebaseOptions? options;
 
-    if (kIsWeb) {
-      // Web-specific configuration
-      print('🔥 Initializing Firebase for Web with explicit config');
-      options = const FirebaseOptions(
-        apiKey: "AIzaSyCOhaSVRuqOWoYmhC4Bv72rII8i8C9kTIc",
-        authDomain: "flutter-chat-app-e52b5.firebaseapp.com",
-        projectId: "flutter-chat-app-e52b5",
-        storageBucket:
-            "flutter-chat-app-e52b5.appspot.com", // Fixed storage bucket URL
-        messagingSenderId: "218916781771",
-        appId: "1:218916781771:web:0aa64d025f00d98e24a54e",
-        databaseURL:
-            "https://flutter-chat-app-e52b5-default-rtdb.firebaseio.com",
-      );
-    } else if (PlatformHelper.isWindows) {
-      // Windows-specific configuration (using the same details for Windows)
-      print('🔥 Initializing Firebase for Windows with explicit config');
-      options = const FirebaseOptions(
-        apiKey: "AIzaSyCOhaSVRuqOWoYmhC4Bv72rII8i8C9kTIc",
-        appId: "1:218916781771:web:0aa64d025f00d98e24a54e",
-        messagingSenderId: "218916781771",
-        projectId: "flutter-chat-app-e52b5",
-        databaseURL:
-            "https://flutter-chat-app-e52b5-default-rtdb.firebaseio.com",
-        storageBucket:
-            "flutter-chat-app-e52b5.appspot.com", // Fixed storage bucket URL
-      );
-    }
-
     try {
-      // Initialize Firebase with platform-specific options
+      // Get proper Firebase options based on platform
+      if (kIsWeb) {
+        // Web-specific configuration
+        print('🔥 Initializing Firebase for Web with explicit config');
+        options = const FirebaseOptions(
+          apiKey: "AIzaSyCOhaSVRuqOWoYmhC4Bv72rII8i8C9kTIc",
+          authDomain: "flutter-chat-app-e52b5.firebaseapp.com",
+          projectId: "flutter-chat-app-e52b5",
+          storageBucket: "flutter-chat-app-e52b5.appspot.com",
+          messagingSenderId: "218916781771",
+          appId: "1:218916781771:web:0aa64d025f00d98e24a54e",
+          databaseURL:
+              "https://flutter-chat-app-e52b5-default-rtdb.firebaseio.com",
+        );
+      } else if (PlatformHelper.isWindows ||
+          PlatformHelper.isMacOS ||
+          PlatformHelper.isLinux) {
+        // Desktop-specific configuration (using the same details for desktop platforms)
+        print('🔥 Initializing Firebase for Desktop with explicit config');
+        options = const FirebaseOptions(
+          apiKey: "AIzaSyCOhaSVRuqOWoYmhC4Bv72rII8i8C9kTIc",
+          appId: "1:218916781771:web:0aa64d025f00d98e24a54e",
+          messagingSenderId: "218916781771",
+          projectId: "flutter-chat-app-e52b5",
+          databaseURL:
+              "https://flutter-chat-app-e52b5-default-rtdb.firebaseio.com",
+          storageBucket: "flutter-chat-app-e52b5.appspot.com",
+        );
+      }
+
+      // Initialize Firebase with platform-specific options or default configuration
       if (options != null) {
         print('🔥 Initializing Firebase with platform-specific options');
         await Firebase.initializeApp(options: options);
       } else {
-        // For Android and other platforms that use google-services.json
-        print('🔥 Initializing Firebase for non-web platform');
+        // For Android and iOS that use google-services.json/GoogleService-Info.plist
+        print('🔥 Initializing Firebase for mobile platform');
         await Firebase.initializeApp();
       }
 
-      // Configure Firestore settings to prevent potential issues
-      final firestoreSettings = Settings(
+      // Configure Firestore settings with safer defaults
+      FirebaseFirestore.instance.settings = Settings(
         persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        cacheSizeBytes: 10485760, // 10 MB - more conservative than unlimited
       );
-
-      FirebaseFirestore.instance.settings = firestoreSettings;
       print('🔥 Configured Firestore with custom settings');
 
       // Configure Firebase Auth persistence for web
@@ -85,33 +91,30 @@ class FirebaseConfig {
           print('🔥 Set Firebase Auth persistence to LOCAL for web');
         } catch (authError) {
           print('⚠️ Auth persistence error (non-critical): $authError');
-          // Continue despite auth persistence error as it's not critical
         }
-      }
-
-      // Check if there's a logged-in user after initialization
-      final currentUser = FirebaseAuth.instance.currentUser;
-      if (currentUser != null) {
-        print(
-            '🔥 Found logged in user after initialization: ${currentUser.uid}');
-      } else {
-        print('🔥 No logged in user found after initialization');
       }
 
       _initialized = true;
       print('✅ Firebase initialization successful');
     } catch (e) {
       print('❌ Error initializing Firebase: $e');
-      // If initialization fails, try to recover
+
+      // More specific error logging to help diagnose the issue
+      if (e is FirebaseException) {
+        print('❌ Firebase error code: ${e.code}');
+        print('❌ Firebase error message: ${e.message}');
+      }
+
+      // Try fallback initialization if initial attempt fails
       if (Firebase.apps.isEmpty) {
         print('⚠️ Trying fallback initialization');
         try {
           await Firebase.initializeApp();
 
-          // Also set up basic Firestore settings in fallback mode
           FirebaseFirestore.instance.settings = Settings(
             persistenceEnabled: true,
-            cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+            cacheSizeBytes:
+                10485760, // 10 MB - more conservative than unlimited
           );
 
           _initialized = true;
@@ -119,6 +122,7 @@ class FirebaseConfig {
         } catch (fallbackError) {
           print('❌ Fallback initialization also failed: $fallbackError');
           _initialized = false;
+          rethrow; // Re-throw to be handled by the application
         }
       }
     }
@@ -154,6 +158,7 @@ class FirebaseConfig {
       print('✅ Firebase restart completed successfully');
     } catch (e) {
       print('❌ Error during Firebase restart: $e');
+      rethrow; // Re-throw to be handled by the application
     }
   }
 }
