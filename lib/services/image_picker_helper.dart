@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:file_selector/file_selector.dart';
+// import 'package:file_selector/file_selector.dart'; // Temporarily removed
 import 'dart:io';
 
 class ImagePickerHelper {
@@ -12,15 +12,20 @@ class ImagePickerHelper {
         source: isCamera ? ImageSource.camera : ImageSource.gallery,
       );
     } else if (Platform.isWindows) {
-      // Windows implementation using file_selector
+      // Windows implementation - temporarily using image_picker fallback
       if (!isCamera) {
-        // Camera not available on Windows desktop
+        // For Windows, use image_picker with gallery option as fallback
+        final ImagePicker picker = ImagePicker();
+        return await picker.pickImage(source: ImageSource.gallery);
+        
+        // Original Windows implementation using file_selector
+        /* 
         final XTypeGroup typeGroup = XTypeGroup(
           label: 'Images',
           extensions: ['jpg', 'jpeg', 'png', 'gif'],
         );
-
         return await openFile(acceptedTypeGroups: [typeGroup]);
+        */
       }
       return null;
     } else {

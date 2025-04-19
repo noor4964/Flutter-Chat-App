@@ -64,7 +64,7 @@ dependencies:
   path_provider: ^2.1.2
   path: ^1.8.3
   uuid: ^4.3.3
-  file_selector: ^1.0.2
+  # file_selector: ^1.0.2  # Temporarily commented out to fix build issues
   
   # UI and formatting
   timeago: ^3.6.1

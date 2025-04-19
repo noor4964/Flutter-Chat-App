@@ -409,7 +409,12 @@ class ChatService {
 
       for (var doc in messagesQuery.docs) {
         Map<String, dynamic> data = doc.data();
-        List<dynamic> readBy = List<dynamic>.from(data['readBy'] ?? []);
+        // Initialize empty list if readBy doesn't exist
+        List<dynamic> readBy = [];
+        
+        if (data.containsKey('readBy') && data['readBy'] != null) {
+          readBy = List<dynamic>.from(data['readBy']);
+        }
 
         print('Checking message ${doc.id} with readBy: $readBy');
 

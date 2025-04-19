@@ -1,5 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum PostPrivacy {
+  public,    // Visible to everyone
+  friends,   // Visible only to friends
+  private    // Visible only to the creator
+}
+
 class Post {
   final String id;
   final String userId;
@@ -11,6 +17,7 @@ class Post {
   final List<String> likes;
   final int commentsCount;
   final String location;
+  final PostPrivacy privacy; // New field for privacy setting
 
   Post({
     required this.id,
@@ -23,6 +30,7 @@ class Post {
     required this.likes,
     required this.commentsCount,
     this.location = '',
+    this.privacy = PostPrivacy.public, // Default to public
   });
 
   bool isLikedBy(String userId) {
@@ -31,6 +39,23 @@ class Post {
 
   factory Post.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    
+    // Convert string privacy setting to enum
+    PostPrivacy privacySetting = PostPrivacy.public;
+    if (data['privacy'] != null) {
+      switch (data['privacy']) {
+        case 'public':
+          privacySetting = PostPrivacy.public;
+          break;
+        case 'friends':
+          privacySetting = PostPrivacy.friends;
+          break;
+        case 'private':
+          privacySetting = PostPrivacy.private;
+          break;
+      }
+    }
+    
     return Post(
       id: doc.id,
       userId: data['userId'] ?? '',
@@ -42,10 +67,25 @@ class Post {
       likes: List<String>.from(data['likes'] ?? []),
       commentsCount: data['commentsCount'] ?? 0,
       location: data['location'] ?? '',
+      privacy: privacySetting,
     );
   }
 
   Map<String, dynamic> toMap() {
+    // Convert enum to string for storage
+    String privacyString;
+    switch (privacy) {
+      case PostPrivacy.public:
+        privacyString = 'public';
+        break;
+      case PostPrivacy.friends:
+        privacyString = 'friends';
+        break;
+      case PostPrivacy.private:
+        privacyString = 'private';
+        break;
+    }
+    
     return {
       'userId': userId,
       'username': username,
@@ -56,6 +96,7 @@ class Post {
       'likes': likes,
       'commentsCount': commentsCount,
       'location': location,
+      'privacy': privacyString,
     };
   }
 
@@ -70,6 +111,7 @@ class Post {
     List<String>? likes,
     int? commentsCount,
     String? location,
+    PostPrivacy? privacy,
   }) {
     return Post(
       id: id ?? this.id,
@@ -82,6 +124,7 @@ class Post {
       likes: likes ?? this.likes,
       commentsCount: commentsCount ?? this.commentsCount,
       location: location ?? this.location,
+      privacy: privacy ?? this.privacy,
     );
   }
 }

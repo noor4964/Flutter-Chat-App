@@ -5,7 +5,7 @@ import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
-import 'package:flutter_chat_app/views/news_feed_screen.dart';
+import 'package:flutter_chat_app/views/social/news_feed_screen.dart';
 import 'package:flutter_chat_app/views/post/post_create_screen.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/widgets/error_boundary.dart';
