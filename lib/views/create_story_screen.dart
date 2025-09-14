@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
+import 'package:flutter_chat_app/models/story_model.dart';
 
 class CreateStoryScreen extends StatefulWidget {
   final XFile? initialImage;
@@ -24,6 +25,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
   bool _isLoading = false;
   String _mediaType = 'image'; // Default is image
   String _backgroundColor = '';
+  StoryPrivacy _selectedPrivacy = StoryPrivacy.friends; // Default to friends
   List<Color> _backgroundColors = [
     Colors.black,
     Colors.deepPurple,
@@ -122,6 +124,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         caption: _captionController.text.trim(),
         background: _backgroundColor,
         mediaType: _mediaType,
+        privacy: _selectedPrivacy,
         context: context,
       );
 
@@ -168,6 +171,11 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
               tooltip: 'Change background color',
               onPressed: () => _showColorPicker(),
             ),
+          IconButton(
+            icon: Icon(_getPrivacyIcon()),
+            tooltip: 'Story privacy',
+            onPressed: () => _showPrivacyPicker(),
+          ),
           TextButton(
             onPressed: _isLoading ? null : _createStory,
             child: Text(
@@ -442,6 +450,118 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
 
     // Return white for dark backgrounds, black for light backgrounds
     return luminance > 0.5 ? Colors.black : Colors.white;
+  }
+
+  // Get privacy icon based on selected privacy setting
+  IconData _getPrivacyIcon() {
+    switch (_selectedPrivacy) {
+      case StoryPrivacy.public:
+        return Icons.public;
+      case StoryPrivacy.friends:
+        return Icons.group;
+      case StoryPrivacy.private:
+        return Icons.lock;
+      default:
+        return Icons.group;
+    }
+  }
+
+  // Show privacy selection bottom sheet
+  void _showPrivacyPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle for the bottom sheet
+            Container(
+              height: 4,
+              width: 40,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            
+            Text(
+              'Who can see your story?',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Privacy options
+            _buildPrivacyOption(
+              StoryPrivacy.public,
+              Icons.public,
+              'Public',
+              'Anyone can view your story',
+            ),
+            _buildPrivacyOption(
+              StoryPrivacy.friends,
+              Icons.group,
+              'Friends',
+              'Only your friends can view your story',
+            ),
+            _buildPrivacyOption(
+              StoryPrivacy.private,
+              Icons.lock,
+              'Private',
+              'Only you can view your story',
+            ),
+            
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Build privacy option tile
+  Widget _buildPrivacyOption(
+    StoryPrivacy privacy,
+    IconData icon,
+    String title,
+    String description,
+  ) {
+    final bool isSelected = _selectedPrivacy == privacy;
+    
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          color: isSelected ? Theme.of(context).primaryColor : null,
+        ),
+      ),
+      subtitle: Text(description),
+      trailing: isSelected
+          ? Icon(
+              Icons.check_circle,
+              color: Theme.of(context).primaryColor,
+            )
+          : null,
+      onTap: () {
+        setState(() {
+          _selectedPrivacy = privacy;
+        });
+        Navigator.pop(context);
+      },
+    );
   }
 
   @override

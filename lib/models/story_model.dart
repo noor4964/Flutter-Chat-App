@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum StoryPrivacy { public, friends, private }
+
 class Story {
   final String id;
   final String userId;
@@ -20,6 +22,7 @@ class Story {
   final List<Map<String, dynamic>> reactions; // Reactions from viewers
   final bool allowSharing; // Whether story can be shared or not
   final List<Map<String, dynamic>> replies; // Replies to the story
+  final StoryPrivacy privacy; // Privacy setting for the story
 
   Story({
     required this.id,
@@ -41,6 +44,7 @@ class Story {
     this.reactions = const [],
     this.allowSharing = true,
     this.replies = const [],
+    this.privacy = StoryPrivacy.friends, // Default to friends-only
   });
 
   bool isViewed(String viewerId) {
@@ -94,6 +98,23 @@ class Story {
 
   factory Story.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    
+    // Parse privacy setting
+    StoryPrivacy privacySetting = StoryPrivacy.friends;
+    if (data['privacy'] != null) {
+      switch (data['privacy']) {
+        case 'public':
+          privacySetting = StoryPrivacy.public;
+          break;
+        case 'friends':
+          privacySetting = StoryPrivacy.friends;
+          break;
+        case 'private':
+          privacySetting = StoryPrivacy.private;
+          break;
+      }
+    }
+    
     return Story(
       id: doc.id,
       userId: data['userId'] ?? '',
@@ -114,10 +135,25 @@ class Story {
       reactions: List<Map<String, dynamic>>.from(data['reactions'] ?? []),
       allowSharing: data['allowSharing'] ?? true,
       replies: List<Map<String, dynamic>>.from(data['replies'] ?? []),
+      privacy: privacySetting,
     );
   }
 
   Map<String, dynamic> toMap() {
+    // Convert enum to string for storage
+    String privacyString;
+    switch (privacy) {
+      case StoryPrivacy.public:
+        privacyString = 'public';
+        break;
+      case StoryPrivacy.friends:
+        privacyString = 'friends';
+        break;
+      case StoryPrivacy.private:
+        privacyString = 'private';
+        break;
+    }
+    
     return {
       'userId': userId,
       'username': username,
@@ -137,6 +173,7 @@ class Story {
       'reactions': reactions,
       'allowSharing': allowSharing,
       'replies': replies,
+      'privacy': privacyString,
     };
   }
 
@@ -160,6 +197,7 @@ class Story {
     List<Map<String, dynamic>>? reactions,
     bool? allowSharing,
     List<Map<String, dynamic>>? replies,
+    StoryPrivacy? privacy,
   }) {
     return Story(
       id: id ?? this.id,
@@ -181,6 +219,7 @@ class Story {
       reactions: reactions ?? this.reactions,
       allowSharing: allowSharing ?? this.allowSharing,
       replies: replies ?? this.replies,
+      privacy: privacy ?? this.privacy,
     );
   }
 }

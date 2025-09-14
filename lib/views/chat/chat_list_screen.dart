@@ -45,6 +45,13 @@ class _ChatListScreenState extends State<ChatListScreen>
   final List<Animation<double>> _itemAnimations = [];
   bool _isSearchFocused = false;
   final ScrollController _scrollController = ScrollController();
+  
+  // Performance optimizations
+  final Map<String, Map<String, String>> _userInfoCache = {};
+  final Map<String, Future<Map<String, String>>> _pendingUserFetches = {};
+  List<DocumentSnapshot> _cachedFilteredChats = [];
+  String _lastSearchQuery = '';
+  Timer? _searchDebouncer;
 
   @override
   void initState() {
@@ -79,6 +86,9 @@ class _ChatListScreenState extends State<ChatListScreen>
     _animationController.dispose();
     _listAnimationController.dispose();
     _scrollController.dispose();
+    _searchDebouncer?.cancel();
+    _userInfoCache.clear();
+    _pendingUserFetches.clear();
     super.dispose();
   }
 
@@ -126,15 +136,19 @@ class _ChatListScreenState extends State<ChatListScreen>
             .where('userIds', arrayContains: currentUser.uid)
             .orderBy('createdAt', descending: true)
             .snapshots()
-            .listen((snapshot) {
+            .listen((snapshot) async {
           final filteredDocs = snapshot.docs.where((doc) {
             Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
             return data['isDeleted'] != true;
           }).toList();
 
+          // Pre-fetch user info for all chats in batch
+          _prefetchUserInfo(filteredDocs);
+
           if (mounted) {
             setState(() {
               _lastSnapshot = snapshot;
+              _cachedFilteredChats.clear(); // Clear cache when data changes
               _initializeItemAnimations(filteredDocs.length);
               _animationController.reset();
               _animationController.forward();
@@ -180,10 +194,36 @@ class _ChatListScreenState extends State<ChatListScreen>
       return {"name": "Unknown", "profileImageUrl": ""};
     }
 
+    // Check cache first
+    if (_userInfoCache.containsKey(otherUserId)) {
+      return _userInfoCache[otherUserId]!;
+    }
+
+    // Check if we're already fetching this user
+    if (_pendingUserFetches.containsKey(otherUserId)) {
+      return _pendingUserFetches[otherUserId]!;
+    }
+
+    // Create the fetch future and cache it
+    final fetchFuture = _fetchUserInfo(otherUserId);
+    _pendingUserFetches[otherUserId] = fetchFuture;
+
+    try {
+      final result = await fetchFuture;
+      _userInfoCache[otherUserId] = result;
+      _pendingUserFetches.remove(otherUserId);
+      return result;
+    } catch (e) {
+      _pendingUserFetches.remove(otherUserId);
+      rethrow;
+    }
+  }
+
+  Future<Map<String, String>> _fetchUserInfo(String userId) async {
     try {
       var userDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(otherUserId)
+          .doc(userId)
           .get();
       if (userDoc.exists) {
         return {
@@ -195,6 +235,73 @@ class _ChatListScreenState extends State<ChatListScreen>
       debugPrint("Error fetching user: $e");
     }
     return {"name": "Unknown", "profileImageUrl": ""};
+  }
+
+  // Batch fetch multiple users at once for better performance
+  Future<Map<String, Map<String, String>>> batchFetchUsers(Set<String> userIds) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return {};
+
+    // Filter out current user and already cached users
+    final uncachedUserIds = userIds
+        .where((id) => id != currentUser.uid && !_userInfoCache.containsKey(id))
+        .toList();
+
+    if (uncachedUserIds.isEmpty) {
+      // Return cached results
+      final result = <String, Map<String, String>>{};
+      for (final id in userIds) {
+        if (id != currentUser.uid && _userInfoCache.containsKey(id)) {
+          result[id] = _userInfoCache[id]!;
+        }
+      }
+      return result;
+    }
+
+    try {
+      // Batch fetch users in chunks to avoid large queries
+      const chunkSize = 10;
+      final results = <String, Map<String, String>>{};
+
+      for (int i = 0; i < uncachedUserIds.length; i += chunkSize) {
+        final chunk = uncachedUserIds.skip(i).take(chunkSize).toList();
+        
+        final querySnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+
+        for (final doc in querySnapshot.docs) {
+          final userInfo = {
+            "name": (doc.data()['username'] ?? 'Unknown') as String,
+            "profileImageUrl": (doc.data()['profileImageUrl'] ?? '') as String
+          };
+          results[doc.id] = userInfo;
+          _userInfoCache[doc.id] = userInfo;
+        }
+
+        // Handle users not found in the query
+        for (final userId in chunk) {
+          if (!results.containsKey(userId)) {
+            final defaultInfo = {"name": "Unknown", "profileImageUrl": ""};
+            results[userId] = defaultInfo;
+            _userInfoCache[userId] = defaultInfo;
+          }
+        }
+      }
+
+      // Add already cached results
+      for (final id in userIds) {
+        if (id != currentUser.uid && _userInfoCache.containsKey(id) && !results.containsKey(id)) {
+          results[id] = _userInfoCache[id]!;
+        }
+      }
+
+      return results;
+    } catch (e) {
+      debugPrint("Error batch fetching users: $e");
+      return {};
+    }
   }
 
   @override
@@ -270,15 +377,83 @@ class _ChatListScreenState extends State<ChatListScreen>
   }
 
   List<DocumentSnapshot> _getFilteredChats() {
-    if (_lastSnapshot == null || _searchQuery.isEmpty) {
-      return _lastSnapshot?.docs ?? [];
+    if (_lastSnapshot == null) return [];
+
+    // Use cached results if search query hasn't changed
+    if (_searchQuery == _lastSearchQuery && _cachedFilteredChats.isNotEmpty) {
+      return _cachedFilteredChats;
     }
 
-    return _lastSnapshot!.docs.where((doc) {
-      var data = doc.data() as Map<String, dynamic>;
-      String lastMessage = data['lastMessage'] ?? '';
-      return lastMessage.toLowerCase().contains(_searchQuery.toLowerCase());
-    }).toList();
+    List<DocumentSnapshot> filtered;
+    if (_searchQuery.isEmpty) {
+      filtered = _lastSnapshot!.docs.where((doc) {
+        var data = doc.data() as Map<String, dynamic>;
+        return data['isDeleted'] != true;
+      }).toList();
+    } else {
+      final query = _searchQuery.toLowerCase();
+      filtered = _lastSnapshot!.docs.where((doc) {
+        var data = doc.data() as Map<String, dynamic>;
+        if (data['isDeleted'] == true) return false;
+        
+        String lastMessage = (data['lastMessage'] ?? '').toString().toLowerCase();
+        
+        // Also search in cached user names
+        final userIds = List<String>.from(data['userIds'] ?? []);
+        final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+        final otherUserId = userIds.firstWhere(
+          (id) => id != currentUserId,
+          orElse: () => '',
+        );
+        
+        String userName = '';
+        if (otherUserId.isNotEmpty && _userInfoCache.containsKey(otherUserId)) {
+          userName = _userInfoCache[otherUserId]!['name']?.toLowerCase() ?? '';
+        }
+        
+        return lastMessage.contains(query) || userName.contains(query);
+      }).toList();
+    }
+
+    // Cache the results
+    _cachedFilteredChats = filtered;
+    _lastSearchQuery = _searchQuery;
+    
+    return filtered;
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebouncer?.cancel();
+    _searchDebouncer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _searchQuery = value;
+          _cachedFilteredChats.clear(); // Clear cache when search changes
+        });
+      }
+    });
+  }
+
+  // Pre-fetch user information for all chats to improve performance
+  void _prefetchUserInfo(List<DocumentSnapshot> chats) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    // Collect all unique user IDs from chats
+    final userIds = <String>{};
+    for (final chat in chats) {
+      final data = chat.data() as Map<String, dynamic>;
+      final chatUserIds = List<String>.from(data['userIds'] ?? []);
+      userIds.addAll(chatUserIds.where((id) => id != currentUserId));
+    }
+
+    // Batch fetch users that aren't already cached
+    if (userIds.isNotEmpty) {
+      batchFetchUsers(userIds).catchError((error) {
+        debugPrint("Error prefetching user info: $error");
+        return <String, Map<String, String>>{};
+      });
+    }
   }
 
   @override
@@ -651,9 +826,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                     ),
                   ),
                   onChanged: (value) {
-                    setState(() {
-                      _searchQuery = value;
-                    });
+                    _onSearchChanged(value);
                   },
                   onTap: () {
                     setState(() {
@@ -784,451 +957,11 @@ class _ChatListScreenState extends State<ChatListScreen>
                                 List<String> userIds = List<String>.from(
                                     chatData['userIds'] ?? []);
 
-                                return FutureBuilder<Map<String, String>>(
-                                  future: fetchChatPartnerInfo(userIds),
-                                  builder: (context, infoSnapshot) {
-                                    if (infoSnapshot.hasError) {
-                                      return const ListTile(
-                                          title: Text("Error loading info"));
-                                    }
-                                    if (!infoSnapshot.hasData) {
-                                      return _buildChatShimmer();
-                                    }
-
-                                    String chatName =
-                                        infoSnapshot.data!["name"]!;
-                                    String profileImageUrl =
-                                        infoSnapshot.data!["profileImageUrl"]!;
-
-                                    bool isRead = false;
-                                    if (user != null &&
-                                        chatData['lastMessageReadBy'] != null) {
-                                      isRead = (chatData['lastMessageReadBy']
-                                              as List<dynamic>)
-                                          .contains(user!.uid);
-                                    }
-
-                                    bool isSelected = widget.isDesktop &&
-                                        chatId == _selectedChatId;
-
-                                    // Format timestamp for display
-                                    String timeString = 'Just now';
-                                    if (chatData['lastMessageTimestamp'] != null) {
-                                      final timestamp = (chatData['lastMessageTimestamp'] as Timestamp).toDate();
-                                      final now = DateTime.now();
-                                      final difference = now.difference(timestamp);
-                                      
-                                      if (difference.inDays > 365) {
-                                        timeString = '${(difference.inDays / 365).floor()}y';
-                                      } else if (difference.inDays > 30) {
-                                        timeString = '${(difference.inDays / 30).floor()}mo';
-                                      } else if (difference.inDays > 0) {
-                                        timeString = '${difference.inDays}d';
-                                      } else if (difference.inHours > 0) {
-                                        timeString = '${difference.inHours}h';
-                                      } else if (difference.inMinutes > 0) {
-                                        timeString = '${difference.inMinutes}m';
-                                      }
-                                    }
-
-                                    return Dismissible(
-                                      key: ValueKey(chatId),
-                                      background: Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.red,
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                        ),
-                                        alignment: Alignment.centerRight,
-                                        padding:
-                                            const EdgeInsets.only(right: 20.0),
-                                        child: const Icon(
-                                          Icons.delete,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      direction: DismissDirection.endToStart,
-                                      confirmDismiss: (direction) async {
-                                        return await showDialog(
-                                          context: context,
-                                          builder: (context) => AlertDialog(
-                                            title: const Text(
-                                                'Delete Conversation'),
-                                            content: Text(
-                                                'Are you sure you want to delete your conversation with $chatName?'),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.of(context)
-                                                        .pop(false),
-                                                child: const Text('Cancel'),
-                                              ),
-                                              ElevatedButton(
-                                                onPressed: () =>
-                                                    Navigator.of(context)
-                                                        .pop(true),
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.red,
-                                                ),
-                                                child: const Text('Delete'),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                      onDismissed: (direction) {
-                                        _deleteChat(chatId, chatName);
-                                      },
-                                      child: FadeTransition(
-                                        opacity: _itemAnimations.isNotEmpty &&
-                                                index < _itemAnimations.length
-                                            ? _itemAnimations[index]
-                                            : const AlwaysStoppedAnimation(1.0),
-                                        child: SlideTransition(
-                                          position: Tween<Offset>(
-                                            begin: const Offset(0.2, 0),
-                                            end: Offset.zero,
-                                          ).animate(CurvedAnimation(
-                                            parent: _animationController,
-                                            curve: Curves.easeOutCubic,
-                                          )),
-                                          child: Card(
-                                            margin: const EdgeInsets.symmetric(
-                                                vertical: 4, horizontal: 8),
-                                            elevation: isSelected ? 4 : 1,
-                                            shadowColor: isSelected
-                                                ? colorScheme.primary
-                                                    .withOpacity(0.3)
-                                                : Colors.black.withOpacity(0.1),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              side: isSelected
-                                                  ? BorderSide(
-                                                      color:
-                                                          colorScheme.primary,
-                                                      width: 1.5)
-                                                  : BorderSide.none,
-                                            ),
-                                            color: isSelected
-                                                ? colorScheme.primaryContainer
-                                                    .withOpacity(0.2)
-                                                : Colors.white,
-                                            child: InkWell(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              splashColor: colorScheme.primary
-                                                  .withOpacity(0.1),
-                                              highlightColor: colorScheme
-                                                  .primary
-                                                  .withOpacity(0.05),
-                                              onTap: () async {
-                                                HapticFeedback.lightImpact();
-
-                                                if (widget.isDesktop &&
-                                                    widget.onChatSelected !=
-                                                        null) {
-                                                  setState(() {
-                                                    _selectedChatId = chatId;
-                                                  });
-                                                  widget.onChatSelected!(
-                                                      chatId, chatName);
-                                                } else {
-                                                  bool? shouldRefresh =
-                                                      await Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(
-                                                      builder: (context) =>
-                                                          ChatScreen(
-                                                              chatId: chatId),
-                                                    ),
-                                                  );
-                                                  if (shouldRefresh == true) {
-                                                    _fetchChatList();
-                                                  }
-                                                }
-                                              },
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 12.0,
-                                                        vertical: 10.0),
-                                                child: Row(
-                                                  children: [
-                                                    Stack(
-                                                      children: [
-                                                        Hero(
-                                                          tag: 'avatar_$chatId',
-                                                          child: Container(
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .all(2),
-                                                            decoration:
-                                                                BoxDecoration(
-                                                              shape: BoxShape
-                                                                  .circle,
-                                                              border: isSelected
-                                                                  ? Border.all(
-                                                                      color: colorScheme
-                                                                          .primary,
-                                                                      width: 2,
-                                                                    )
-                                                                  : !isRead
-                                                                      ? Border
-                                                                          .all(
-                                                                          color:
-                                                                              colorScheme.primary,
-                                                                          width:
-                                                                              1.5,
-                                                                        )
-                                                                      : null,
-                                                              boxShadow: isSelected ||
-                                                                      !isRead
-                                                                  ? [
-                                                                      BoxShadow(
-                                                                        color: colorScheme
-                                                                            .primary
-                                                                            .withOpacity(0.3),
-                                                                        blurRadius:
-                                                                            8,
-                                                                        spreadRadius:
-                                                                            1,
-                                                                      )
-                                                                    ]
-                                                                  : null,
-                                                            ),
-                                                            child: CircleAvatar(
-                                                              radius:
-                                                                  26, // Slightly larger avatar
-                                                              backgroundImage:
-                                                                  profileImageUrl
-                                                                          .isNotEmpty
-                                                                      ? NetworkImage(
-                                                                          profileImageUrl)
-                                                                      : null,
-                                                              backgroundColor:
-                                                                  colorScheme
-                                                                      .primary
-                                                                      .withOpacity(
-                                                                          0.2),
-                                                              child: profileImageUrl
-                                                                      .isEmpty
-                                                                  ? Text(
-                                                                      chatName.isNotEmpty
-                                                                          ? chatName[
-                                                                                  0]
-                                                                              .toUpperCase()
-                                                                          : '?',
-                                                                      style:
-                                                                          TextStyle(
-                                                                        color: colorScheme
-                                                                            .primary,
-                                                                        fontWeight:
-                                                                            FontWeight.bold,
-                                                                        fontSize:
-                                                                            20,
-                                                                      ),
-                                                                    )
-                                                                  : null,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                        if (index % 3 == 0)
-                                                          Positioned(
-                                                            right: 2,
-                                                            bottom: 2,
-                                                            child: Container(
-                                                              width: 14,
-                                                              height: 14,
-                                                              decoration:
-                                                                  BoxDecoration(
-                                                                color: Colors
-                                                                    .green,
-                                                                shape: BoxShape
-                                                                    .circle,
-                                                                border:
-                                                                    Border.all(
-                                                                  color: Colors
-                                                                      .white,
-                                                                  width: 2,
-                                                                ),
-                                                                boxShadow: [
-                                                                  BoxShadow(
-                                                                    color: Colors
-                                                                        .black
-                                                                        .withOpacity(
-                                                                            0.2),
-                                                                    blurRadius:
-                                                                        2,
-                                                                    spreadRadius:
-                                                                        0,
-                                                                  )
-                                                                ],
-                                                              ),
-                                                            ),
-                                                          ),
-                                                      ],
-                                                    ),
-                                                    const SizedBox(width: 14),
-                                                    Expanded(
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Row(
-                                                            mainAxisAlignment:
-                                                                MainAxisAlignment
-                                                                    .spaceBetween,
-                                                            children: [
-                                                              Flexible(
-                                                                child: Text(
-                                                                  chatName,
-                                                                  style:
-                                                                      TextStyle(
-                                                                    fontWeight: isRead
-                                                                        ? FontWeight
-                                                                            .normal
-                                                                        : FontWeight
-                                                                            .bold,
-                                                                    fontSize:
-                                                                        16,
-                                                                    color: isRead
-                                                                        ? Colors
-                                                                            .black87
-                                                                        : colorScheme
-                                                                            .primary,
-                                                                  ),
-                                                                  overflow:
-                                                                      TextOverflow
-                                                                          .ellipsis,
-                                                                ),
-                                                              ),
-                                                              Row(
-                                                                children: [
-                                                                  if (!isRead)
-                                                                    Container(
-                                                                      margin: const EdgeInsets
-                                                                              .only(
-                                                                          right:
-                                                                              6),
-                                                                      padding: const EdgeInsets
-                                                                              .symmetric(
-                                                                          horizontal:
-                                                                              8,
-                                                                          vertical:
-                                                                              2),
-                                                                      decoration:
-                                                                          BoxDecoration(
-                                                                        color: colorScheme
-                                                                            .primary,
-                                                                        borderRadius:
-                                                                            BorderRadius.circular(10),
-                                                                      ),
-                                                                      child:
-                                                                          const Text(
-                                                                        'NEW',
-                                                                        style:
-                                                                            TextStyle(
-                                                                          color:
-                                                                              Colors.white,
-                                                                          fontSize:
-                                                                              10,
-                                                                          fontWeight:
-                                                                              FontWeight.bold,
-                                                                        ),
-                                                                      ),
-                                                                    ),
-                                                                  Text(
-                                                                    timeString,
-                                                                    style:
-                                                                        TextStyle(
-                                                                      fontSize:
-                                                                          12,
-                                                                      color: isRead
-                                                                          ? Colors
-                                                                              .grey
-                                                                          : colorScheme
-                                                                              .primary,
-                                                                      fontWeight: isRead
-                                                                          ? FontWeight
-                                                                              .normal
-                                                                          : FontWeight
-                                                                              .bold,
-                                                                    ),
-                                                                  ),
-                                                                ],
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          const SizedBox(
-                                                              height: 6),
-                                                          Row(
-                                                            children: [
-                                                              Expanded(
-                                                                child: Text(
-                                                                  chatData[
-                                                                          'lastMessage'] ??
-                                                                      "Tap to start chatting",
-                                                                  maxLines: 1,
-                                                                  overflow:
-                                                                      TextOverflow
-                                                                          .ellipsis,
-                                                                  style:
-                                                                      TextStyle(
-                                                                    fontSize:
-                                                                        14,
-                                                                    color: isRead
-                                                                        ? Colors
-                                                                            .grey[600]
-                                                                        : Colors
-                                                                            .black87,
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                              if (!isRead)
-                                                                AnimatedContainer(
-                                                                  duration: const Duration(
-                                                                      milliseconds:
-                                                                          300),
-                                                                  margin: const EdgeInsets
-                                                                      .only(
-                                                                      left: 8),
-                                                                  width: 10,
-                                                                  height: 10,
-                                                                  decoration:
-                                                                      BoxDecoration(
-                                                                    color: colorScheme
-                                                                        .primary,
-                                                                    shape: BoxShape
-                                                                        .circle,
-                                                                    boxShadow: [
-                                                                      BoxShadow(
-                                                                        color: colorScheme
-                                                                            .primary
-                                                                            .withOpacity(0.4),
-                                                                        blurRadius:
-                                                                            4,
-                                                                        spreadRadius:
-                                                                            1,
-                                                                      )
-                                                                    ],
-                                                                  ),
-                                                                ),
-                                                            ],
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                return _buildChatListItem(
+                                  chatData: chatData,
+                                  chatId: chatId,
+                                  userIds: userIds,
+                                  index: index,
                                 );
                               },
                             ),
@@ -1257,6 +990,221 @@ class _ChatListScreenState extends State<ChatListScreen>
               : null,
         );
       },
+    );
+  }
+
+  Widget _buildChatListItem({
+    required Map<String, dynamic> chatData,
+    required String chatId,
+    required List<String> userIds,
+    required int index,
+  }) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) {
+      return _buildChatShimmer();
+    }
+
+    final otherUserId = userIds.firstWhere(
+      (id) => id != currentUserId,
+      orElse: () => '',
+    );
+
+    // Get user info from cache or show shimmer while loading
+    Map<String, String>? userInfo;
+    if (otherUserId.isNotEmpty && _userInfoCache.containsKey(otherUserId)) {
+      userInfo = _userInfoCache[otherUserId];
+    }
+
+    if (userInfo == null) {
+      // Start loading user info if not in cache
+      if (otherUserId.isNotEmpty) {
+        fetchChatPartnerInfo(userIds).then((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      return _buildChatShimmer();
+    }
+
+    final chatName = userInfo['name'] ?? 'Unknown';
+    final profileImageUrl = userInfo['profileImageUrl'] ?? '';
+    
+    bool isRead = false;
+    if (user != null && chatData['lastMessageReadBy'] != null) {
+      isRead = (chatData['lastMessageReadBy'] as List<dynamic>)
+          .contains(user!.uid);
+    }
+
+    bool isSelected = widget.isDesktop && chatId == _selectedChatId;
+
+    // Format timestamp for display
+    String timeString = 'Just now';
+    if (chatData['lastMessageTimestamp'] != null) {
+      final timestamp = (chatData['lastMessageTimestamp'] as Timestamp).toDate();
+      final now = DateTime.now();
+      final difference = now.difference(timestamp);
+      
+      if (difference.inDays > 365) {
+        timeString = '${(difference.inDays / 365).floor()}y';
+      } else if (difference.inDays > 30) {
+        timeString = '${(difference.inDays / 30).floor()}mo';
+      } else if (difference.inDays > 0) {
+        timeString = '${difference.inDays}d';
+      } else if (difference.inHours > 0) {
+        timeString = '${difference.inHours}h';
+      } else if (difference.inMinutes > 0) {
+        timeString = '${difference.inMinutes}m';
+      }
+    }
+
+    return Dismissible(
+      key: ValueKey(chatId),
+      background: Container(
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20.0),
+        child: const Icon(
+          Icons.delete,
+          color: Colors.white,
+        ),
+      ),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (direction) async {
+        return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete Conversation'),
+            content: Text(
+                'Are you sure you want to delete your conversation with $chatName?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        );
+      },
+      onDismissed: (direction) {
+        _deleteChat(chatId, chatName);
+      },
+      child: FadeTransition(
+        opacity: _itemAnimations.isNotEmpty && index < _itemAnimations.length
+            ? _itemAnimations[index]
+            : const AlwaysStoppedAnimation(1.0),
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0.2, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(
+            parent: _animationController,
+            curve: Curves.easeOutCubic,
+          )),
+          child: Card(
+            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+            elevation: isSelected ? 4 : 1,
+            shadowColor: isSelected
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+                : Colors.black.withOpacity(0.1),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: isSelected
+                  ? BorderSide(
+                      color: Theme.of(context).colorScheme.primary,
+                      width: 2,
+                    )
+                  : BorderSide.none,
+            ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              leading: CircleAvatar(
+                radius: 28,
+                backgroundImage: profileImageUrl.isNotEmpty
+                    ? NetworkImage(profileImageUrl)
+                    : null,
+                child: profileImageUrl.isEmpty
+                    ? Text(
+                        chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      )
+                    : null,
+              ),
+              title: Text(
+                chatName,
+                style: TextStyle(
+                  fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                chatData['lastMessage'] ?? 'No messages yet',
+                style: TextStyle(
+                  color: isRead ? Colors.grey[600] : Colors.grey[800],
+                  fontWeight: isRead ? FontWeight.normal : FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    timeString,
+                    style: TextStyle(
+                      color: Colors.grey[500],
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (!isRead) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              onTap: () {
+                HapticFeedback.lightImpact();
+
+                if (widget.isDesktop) {
+                  setState(() {
+                    _selectedChatId = chatId;
+                  });
+
+                  if (widget.onChatSelected != null) {
+                    widget.onChatSelected!(chatId, chatName);
+                  }
+                } else {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ChatScreen(
+                        chatId: chatId,
+                      ),
+                    ),
+                  ).then((_) => _fetchChatList());
+                }
+              },
+            ),
+          ),
+        ),
+      ),
     );
   }
 

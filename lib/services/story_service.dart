@@ -42,7 +42,62 @@ class StoryService {
   // Stream of error messages that UI can listen to
   Stream<String> get onError => _errorController.stream;
 
-  // Get all active stories for the feed (not expired)
+  // Helper method to check friendship status between two users
+  Future<bool> _checkFriendshipStatus(String userId1, String userId2) async {
+    if (userId1.isEmpty || userId2.isEmpty || userId1 == userId2) {
+      return userId1 == userId2; // Users can always see their own stories
+    }
+
+    try {
+      final connectionsSnapshot = await _firestore
+          .collection('connections')
+          .where('status', isEqualTo: 'accepted')
+          .where(Filter.or(
+              Filter.and(Filter('senderId', isEqualTo: userId1),
+                  Filter('receiverId', isEqualTo: userId2)),
+              Filter.and(Filter('senderId', isEqualTo: userId2),
+                  Filter('receiverId', isEqualTo: userId1))))
+          .get();
+
+      return connectionsSnapshot.docs.isNotEmpty;
+    } catch (e) {
+      print('Error checking friendship status: $e');
+      return false;
+    }
+  }
+
+  // Get list of current user's friends
+  Future<List<String>> _getCurrentUserFriends() async {
+    if (currentUserId == null) return [];
+
+    try {
+      final connectionsSnapshot = await _firestore
+          .collection('connections')
+          .where('status', isEqualTo: 'accepted')
+          .where(Filter.or(
+              Filter('senderId', isEqualTo: currentUserId!),
+              Filter('receiverId', isEqualTo: currentUserId!)))
+          .get();
+
+      List<String> friendIds = [];
+      for (var doc in connectionsSnapshot.docs) {
+        final data = doc.data();
+        final String friendId = data['senderId'] == currentUserId
+            ? data['receiverId']
+            : data['senderId'];
+        friendIds.add(friendId);
+      }
+
+      // Add current user to see own stories
+      friendIds.add(currentUserId!);
+      return friendIds;
+    } catch (e) {
+      print('Error getting user friends: $e');
+      return [currentUserId!]; // At least include current user
+    }
+  }
+
+  // Get all active stories for the feed (friends-only)
   Stream<List<Story>> getActiveStories({BuildContext? context}) {
     try {
       // Create a stream transformer to handle errors
@@ -76,9 +131,33 @@ class StoryService {
           .orderBy('expiryTime', descending: false)
           .snapshots()
           .transform(errorHandler)
-          .map((snapshot) {
+          .asyncMap((snapshot) async {
         try {
-          return snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+          List<Story> allStories = snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+          
+          // Get current user's friends list
+          List<String> friendIds = await _getCurrentUserFriends();
+          
+          // Filter stories based on privacy and friendship
+          List<Story> visibleStories = [];
+          for (Story story in allStories) {
+            // Always show public stories
+            if (story.privacy == StoryPrivacy.public) {
+              visibleStories.add(story);
+            }
+            // Show friends-only stories if user is friends with story creator
+            else if (story.privacy == StoryPrivacy.friends && 
+                     friendIds.contains(story.userId)) {
+              visibleStories.add(story);
+            }
+            // Private stories are only visible to the creator (handled by friendIds containing current user)
+            else if (story.privacy == StoryPrivacy.private && 
+                     story.userId == currentUserId) {
+              visibleStories.add(story);
+            }
+          }
+          
+          return visibleStories;
         } catch (e) {
           print('❌ Error parsing stories: $e');
           _errorController
@@ -142,7 +221,7 @@ class StoryService {
     }
   }
 
-  // Get stories for a specific user
+  // Get stories for a specific user (respecting privacy)
   Stream<List<Story>> getUserStories(String userId, {BuildContext? context}) {
     try {
       StreamTransformer<QuerySnapshot<Map<String, dynamic>>,
@@ -174,9 +253,33 @@ class StoryService {
           .orderBy('expiryTime', descending: true)
           .snapshots()
           .transform(errorHandler)
-          .map((snapshot) {
+          .asyncMap((snapshot) async {
         try {
-          return snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+          List<Story> allStories = snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+          
+          // If viewing own stories, show all
+          if (userId == currentUserId) {
+            return allStories;
+          }
+          
+          // Check friendship status
+          bool isFriend = await _checkFriendshipStatus(currentUserId ?? '', userId);
+          
+          // Filter stories based on privacy and friendship
+          List<Story> visibleStories = [];
+          for (Story story in allStories) {
+            // Always show public stories
+            if (story.privacy == StoryPrivacy.public) {
+              visibleStories.add(story);
+            }
+            // Show friends-only stories if user is friends with story creator
+            else if (story.privacy == StoryPrivacy.friends && isFriend) {
+              visibleStories.add(story);
+            }
+            // Private stories are never visible to others
+          }
+          
+          return visibleStories;
         } catch (e) {
           print('❌ Error parsing user stories: $e');
           _errorController
@@ -204,7 +307,31 @@ class StoryService {
           .orderBy('expiryTime', descending: true)
           .get();
 
-      return snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+      List<Story> allStories = snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList();
+      
+      // If viewing own stories, show all
+      if (userId == currentUserId) {
+        return allStories;
+      }
+      
+      // Check friendship status
+      bool isFriend = await _checkFriendshipStatus(currentUserId ?? '', userId);
+      
+      // Filter stories based on privacy and friendship
+      List<Story> visibleStories = [];
+      for (Story story in allStories) {
+        // Always show public stories
+        if (story.privacy == StoryPrivacy.public) {
+          visibleStories.add(story);
+        }
+        // Show friends-only stories if user is friends with story creator
+        else if (story.privacy == StoryPrivacy.friends && isFriend) {
+          visibleStories.add(story);
+        }
+        // Private stories are never visible to others
+      }
+      
+      return visibleStories;
     } catch (e) {
       print('❌ Error getting user stories future: $e');
       await _errorHandler.handleFirebaseException(e, context);
@@ -223,6 +350,7 @@ class StoryService {
     String? location,
     String? filter,
     bool allowSharing = true,
+    StoryPrivacy privacy = StoryPrivacy.friends,
     BuildContext? context,
   }) async {
     if (currentUserId == null) return;
@@ -256,6 +384,7 @@ class StoryService {
         reactions: [],
         allowSharing: allowSharing,
         replies: [],
+        privacy: privacy,
       );
 
       await _firestore.collection('stories').add(story.toMap());
@@ -751,6 +880,7 @@ class StoryService {
     String? location,
     String? filter,
     bool allowSharing = true,
+    StoryPrivacy privacy = StoryPrivacy.friends,
     BuildContext? context,
   }) async {
     if (currentUserId == null) {
@@ -854,6 +984,7 @@ class StoryService {
         location: location,
         filter: filter,
         allowSharing: allowSharing,
+        privacy: privacy,
         context: context,
       );
 

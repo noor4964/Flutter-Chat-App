@@ -603,12 +603,30 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 4),
-                                    Text(
-                                      _getTimeAgo(firstStory.timestamp),
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.grey[600],
-                                      ),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          _getTimeAgo(firstStory.timestamp),
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Icon(
+                                          _getPrivacyIcon(firstStory.privacy),
+                                          size: 14,
+                                          color: Colors.grey[600],
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          _getPrivacyText(firstStory.privacy),
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
@@ -1172,5 +1190,33 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         ],
       ),
     );
+  }
+
+  // Get privacy icon based on story privacy
+  IconData _getPrivacyIcon(StoryPrivacy privacy) {
+    switch (privacy) {
+      case StoryPrivacy.public:
+        return Icons.public;
+      case StoryPrivacy.friends:
+        return Icons.group;
+      case StoryPrivacy.private:
+        return Icons.lock;
+      default:
+        return Icons.group;
+    }
+  }
+
+  // Get privacy text based on story privacy
+  String _getPrivacyText(StoryPrivacy privacy) {
+    switch (privacy) {
+      case StoryPrivacy.public:
+        return 'Public';
+      case StoryPrivacy.friends:
+        return 'Friends';
+      case StoryPrivacy.private:
+        return 'Private';
+      default:
+        return 'Friends';
+    }
   }
 }

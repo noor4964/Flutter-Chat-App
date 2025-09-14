@@ -21,7 +21,7 @@ class ChatService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Send a text message
+  // Send a text message - Optimized for performance
   Future<void> sendMessage(
       String chatId, String message, String senderId) async {
     if (_isWindowsWithoutFirebase) {
@@ -34,53 +34,46 @@ class ChatService {
       print('Sending message on platform: ${_isWeb ? "Web" : "Native"}');
       print('ChatID: $chatId, SenderID: $senderId');
 
-      // Verify chat exists
-      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
-      if (!chatDoc.exists) {
-        print('Error: Chat with ID $chatId does not exist');
-        throw Exception('Chat does not exist');
-      }
-
-      // Add message to chat collection
-      DocumentReference messageRef = await _firestore
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add({
+      // Create message data once
+      final messageData = {
         'content': message,
         'senderId': senderId,
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'text',
         'readBy': [senderId], // Initialize with sender as having read it
-      });
+      };
 
-      print('Message document created with ID: ${messageRef.id}');
+      // Create chat metadata update data
+      final chatUpdateData = {
+        'lastMessage': message,
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      };
 
-      // Use a try-catch block for the update operation to prevent failure cascade
-      try {
-        // Update chat metadata with last message
-        await _firestore.collection('chats').doc(chatId).update({
-          'lastMessage': message,
-          'lastMessageSenderId': senderId,
-          'lastMessageReadBy': [senderId],
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        print('Chat metadata updated successfully');
-      } catch (e) {
-        // Log but continue - we don't want to fail the whole message send if just metadata fails
-        print('Warning: Failed to update chat metadata: $e');
-      }
+      // Use batch write for atomic operations and better performance
+      final batch = _firestore.batch();
+      
+      // Add message to chat collection
+      final messageRef = _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(); // Generate doc reference without await
+      
+      batch.set(messageRef, messageData);
+      
+      // Update chat metadata in the same batch
+      final chatRef = _firestore.collection('chats').doc(chatId);
+      batch.update(chatRef, chatUpdateData);
 
-      // Clear typing indicator when sending a message
-      try {
-        await setTypingStatus(chatId, senderId, false);
-      } catch (e) {
-        // Log but continue - typing status is non-critical
-        print('Warning: Failed to clear typing status: $e');
-      }
+      // Execute batch write - this is much faster than sequential operations
+      await batch.commit();
+      
+      print('Message and metadata saved successfully with batch write');
 
-      // Send notification to chat recipients who aren't currently in the chat
-      await _sendNotificationToRecipients(chatId, senderId, message);
+      // Perform non-critical operations asynchronously (don't await)
+      _performAsyncCleanup(chatId, senderId, message);
 
       print('Message sent successfully to chat $chatId');
     } catch (e) {
@@ -88,6 +81,24 @@ class ChatService {
       // Added stack trace for better debugging
       print('Stack trace: ${StackTrace.current}');
       throw e;
+    }
+  }
+
+  // Separate method for non-critical async operations
+  Future<void> _performAsyncCleanup(String chatId, String senderId, String message) async {
+    // These operations run in background and don't block the main send operation
+    try {
+      // Clear typing indicator when sending a message
+      setTypingStatus(chatId, senderId, false).catchError((e) {
+        print('Warning: Failed to clear typing status: $e');
+      });
+
+      // Send notification to chat recipients who aren't currently in the chat
+      _sendNotificationToRecipients(chatId, senderId, message).catchError((e) {
+        print('Warning: Failed to send notifications: $e');
+      });
+    } catch (e) {
+      print('Warning: Background cleanup failed: $e');
     }
   }
 

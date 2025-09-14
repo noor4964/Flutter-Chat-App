@@ -293,6 +293,31 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                                       ),
                                     ],
                                   ),
+                                // Show privacy indicator
+                                Row(
+                                  children: [
+                                    Text(
+                                      ' • ',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.8),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    Icon(
+                                      _getPrivacyIcon(story.privacy),
+                                      size: 12,
+                                      color: Colors.white.withOpacity(0.8),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      _getPrivacyText(story.privacy),
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.8),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ],
                             ),
                           ],
@@ -1235,6 +1260,34 @@ class _StoryViewScreenState extends State<StoryViewScreen>
     } catch (e) {
       print('❌ Error fetching viewers data: $e');
       return [];
+    }
+  }
+
+  // Get privacy icon based on story privacy
+  IconData _getPrivacyIcon(StoryPrivacy privacy) {
+    switch (privacy) {
+      case StoryPrivacy.public:
+        return Icons.public;
+      case StoryPrivacy.friends:
+        return Icons.group;
+      case StoryPrivacy.private:
+        return Icons.lock;
+      default:
+        return Icons.group;
+    }
+  }
+
+  // Get privacy text based on story privacy
+  String _getPrivacyText(StoryPrivacy privacy) {
+    switch (privacy) {
+      case StoryPrivacy.public:
+        return 'Public';
+      case StoryPrivacy.friends:
+        return 'Friends';
+      case StoryPrivacy.private:
+        return 'Private';
+      default:
+        return 'Friends';
     }
   }
 }

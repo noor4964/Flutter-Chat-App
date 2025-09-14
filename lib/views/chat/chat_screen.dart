@@ -1420,18 +1420,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _replyingTo = '';
     });
 
-    // Scroll to bottom with slight delay to avoid keyboard conflicts
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _scrollToBottom();
-    });
+    // Immediate scroll to bottom for instant feedback
+    _scrollToBottom();
 
     try {
-      // Send message to Firebase
+      // Send message to Firebase - optimized for performance
       await _chatService.sendMessage(
         widget.chatId,
         messageText,
         user!.uid,
       );
+
+      // Message sent successfully - no need for success notification
+      // The real-time listener will update the UI automatically
 
     } catch (e) {
       // Enhanced error handling with user-friendly messages
