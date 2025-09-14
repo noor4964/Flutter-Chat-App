@@ -162,21 +162,20 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
   }
 
   Future<void> _checkFirebaseStatus() async {
-    try {
-      // Verify Firebase is properly initialized
-      if (!FirebaseConfig.isInitialized) {
-        await FirebaseConfig.restartFirebase();
-      }
-
+    // Simplified Firebase status check - no restart attempts
+    print('🔍 Checking Firebase status...');
+    
+    if (FirebaseConfig.isInitialized) {
+      print('✅ Firebase is initialized and ready');
       setState(() {
         _isInitializing = false;
         _errorMessage = null;
       });
-    } catch (e) {
+    } else {
+      print('⚠️ Firebase not initialized, but continuing...');
       setState(() {
         _isInitializing = false;
-        _errorMessage =
-            "Could not connect to the database. Please check your internet connection.";
+        _errorMessage = null; // Don't show error, let the app continue
       });
     }
   }

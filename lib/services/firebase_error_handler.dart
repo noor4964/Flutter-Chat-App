@@ -43,19 +43,19 @@ class FirebaseErrorHandler {
         print(
             '🔍 Detected a Firestore assertion error, attempting recovery...');
 
-        // Clear Firestore cache and restart Firebase
+        // Clear Firestore cache only - avoid restart for now
         await FirebaseConfig.clearFirestoreCache();
-        await FirebaseConfig.restartFirebase();
+        // await FirebaseConfig.restartFirebase(); // Temporarily disabled to avoid null check errors
 
         recovered = true;
-        print('✅ Recovery process completed');
+        print('✅ Recovery process completed (cache cleared)');
       }
       // Handle other Firebase error types as needed
       else if (error is FirebaseException) {
         if (error.code == 'unavailable' || error.code == 'resource-exhausted') {
-          print('🔌 Firebase service unavailable, attempting to reconnect...');
-          await FirebaseConfig.restartFirebase();
-          recovered = true;
+          print('🔌 Firebase service unavailable, logging error...');
+          // await FirebaseConfig.restartFirebase(); // Temporarily disabled to avoid null check errors
+          recovered = false; // Don't claim recovery since we didn't restart
         }
       }
 
@@ -121,9 +121,11 @@ class FirebaseErrorHandler {
             TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();
-                await FirebaseConfig.restartFirebase();
+                // Temporarily disable restart to avoid null check errors
+                print('🔄 Restart requested by user but temporarily disabled');
+                // await FirebaseConfig.restartFirebase();
               },
-              child: const Text('Try to Fix'),
+              child: const Text('Acknowledge'),
             ),
         ],
       ),

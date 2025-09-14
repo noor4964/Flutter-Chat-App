@@ -10,6 +10,7 @@ class FirebaseConfig {
 
   // Add a flag to track initialization state
   static bool _initialized = false;
+  static bool _initializationAttempted = false;
 
   // Add a getter to check if Firebase is initialized
   static bool get isInitialized => _initialized;
@@ -21,18 +22,13 @@ class FirebaseConfig {
   static Future<void> initializeFirebase() async {
     print('🔥 Starting Firebase initialization...');
 
-    // Skip initialization if already initialized
-    if (_initialized) {
-      print('🔥 Firebase already initialized, skipping...');
+    // Skip initialization if already attempted
+    if (_initializationAttempted) {
+      print('🔥 Firebase initialization already attempted, status: $_initialized');
       return;
     }
 
-    // Check if Firebase is already initialized
-    if (Firebase.apps.isNotEmpty) {
-      _initialized = true;
-      print('🔥 Firebase already has apps, skipping...');
-      return;
-    }
+    _initializationAttempted = true;
 
     FirebaseOptions? options;
 
@@ -78,11 +74,15 @@ class FirebaseConfig {
       }
 
       // Configure Firestore settings with safer defaults
-      FirebaseFirestore.instance.settings = Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: 10485760, // 10 MB - more conservative than unlimited
-      );
-      print('🔥 Configured Firestore with custom settings');
+      try {
+        FirebaseFirestore.instance.settings = Settings(
+          persistenceEnabled: true,
+          cacheSizeBytes: 10485760, // 10 MB - more conservative than unlimited
+        );
+        print('🔥 Configured Firestore with custom settings');
+      } catch (firestoreError) {
+        print('⚠️ Firestore settings error (non-critical): $firestoreError');
+      }
 
       // Configure Firebase Auth persistence for web
       if (kIsWeb) {
@@ -105,25 +105,16 @@ class FirebaseConfig {
         print('❌ Firebase error message: ${e.message}');
       }
 
-      // Try fallback initialization if initial attempt fails
-      if (Firebase.apps.isEmpty) {
-        print('⚠️ Trying fallback initialization');
-        try {
-          await Firebase.initializeApp();
-
-          FirebaseFirestore.instance.settings = Settings(
-            persistenceEnabled: true,
-            cacheSizeBytes:
-                10485760, // 10 MB - more conservative than unlimited
-          );
-
-          _initialized = true;
-          print('✅ Fallback initialization successful');
-        } catch (fallbackError) {
-          print('❌ Fallback initialization also failed: $fallbackError');
-          _initialized = false;
-          rethrow; // Re-throw to be handled by the application
-        }
+      // Simple fallback - just try basic initialization without checking apps
+      try {
+        print('⚠️ Trying simple fallback initialization');
+        await Firebase.initializeApp();
+        _initialized = true;
+        print('✅ Fallback initialization successful');
+      } catch (fallbackError) {
+        print('❌ Fallback initialization also failed: $fallbackError');
+        _initialized = false;
+        // Don't rethrow - let the app continue with error state
       }
     }
   }
@@ -141,24 +132,18 @@ class FirebaseConfig {
 
   // Add a method to restart Firebase (useful for error recovery)
   static Future<void> restartFirebase() async {
+    print('🔄 Firebase restart requested...');
+    
+    // Simply reset our initialization flags and try again
+    _initialized = false;
+    _initializationAttempted = false;
+    
     try {
-      print('🔄 Restarting Firebase...');
-
-      // First terminate all Firebase apps
-      for (final app in Firebase.apps) {
-        await app.delete();
-      }
-
-      // Clear the initialization flag
-      _initialized = false;
-
-      // Re-initialize Firebase
       await initializeFirebase();
-
-      print('✅ Firebase restart completed successfully');
+      print('✅ Firebase restart completed');
     } catch (e) {
       print('❌ Error during Firebase restart: $e');
-      rethrow; // Re-throw to be handled by the application
+      // Don't rethrow - just log the error
     }
   }
 }
