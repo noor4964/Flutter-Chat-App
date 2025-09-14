@@ -15,6 +15,7 @@ import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
 import 'dart:async';
+import '../../../utils/user_friendly_error_handler.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -39,6 +40,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isSending = false;
   String _replyingTo = '';
   bool _isEmojiPickerOpen = false; // State variable for emoji picker
+
+  // Ajax-type system variables
+  bool _isConnected = true; // Connection status for real-time feedback
+  Timer? _connectionCheckTimer; // Periodic connection checking
 
   // For animations
   late AnimationController _sendButtonAnimationController;
@@ -78,6 +83,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Listen to text changes to animate send button
     _messageController.addListener(_onMessageTextChanged);
+
+    // Initialize Ajax-type connection monitoring
+    _startConnectionMonitoring();
   }
 
   void _onMessageTextChanged() {
@@ -110,6 +118,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Cancel message read timer
     _messageReadTimer?.cancel();
+
+    // Cancel connection monitoring timer
+    _connectionCheckTimer?.cancel();
 
     super.dispose();
   }
@@ -427,6 +438,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ),
         actions: [
+          // Connection status indicator for Ajax-type system
+          _buildConnectionIndicator(theme),
           IconButton(
             icon: const Icon(Icons.call),
             color: theme.brightness == Brightness.dark ? null : Colors.white,
@@ -625,14 +638,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               return _buildEmptyChat();
                             }
 
-                            return ListView.builder(
-                              controller: _scrollController,
-                              reverse:
-                                  true, // Reverse the order of the messages
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 16, horizontal: 8),
-                              itemCount: _groupedMessages.length,
-                              itemBuilder: (context, index) {
+                            // Add pull-to-refresh for Ajax-type experience
+                            return RefreshIndicator(
+                              onRefresh: _refreshChatData,
+                              child: ListView.builder(
+                                controller: _scrollController,
+                                reverse:
+                                    true, // Reverse the order of the messages
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 16, horizontal: 8),
+                                itemCount: _groupedMessages.length,
+                                itemBuilder: (context, index) {
                                 final dateKey =
                                     _groupedMessages.keys.elementAt(index);
                                 final messagesForDate =
@@ -838,12 +854,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                   ],
                                 );
                               },
-                            );
-                          }
+                            ),
+                          );
+                        }
 
-                          return _buildEmptyChat();
-                        },
-                      );
+                        return _buildEmptyChat();
+                      },
+                    );
                     },
                   ),
                 ),
@@ -1324,31 +1341,40 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (_messageController.text.isEmpty || _isSending) return;
 
     final messageText = _messageController.text.trim();
+    
+    // Clear input immediately for better UX (optimistic)
     _messageController.clear();
 
-    // Reset reply state
+    // Reset reply state and show sending state
     setState(() {
       _isSending = true;
       _replyingTo = '';
     });
 
+    // Scroll to bottom immediately to show optimistic behavior
+    _scrollToBottom();
+
     try {
+      // Send message to Firebase
       await _chatService.sendMessage(
         widget.chatId,
         messageText,
         user!.uid,
       );
 
-      // Scroll to bottom to show the new message
-      _scrollToBottom();
+      // Show success feedback for offline scenarios
+      _showQuickFeedback('Message sent', Colors.green);
+
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send message: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      print('Error sending message: $e');
+      // Enhanced error handling with user-friendly messages
+      String errorMessage = UserFriendlyErrorHandler.getReadableErrorMessage(e.toString());
+      
+      // Restore message text for retry
+      _messageController.text = messageText;
+      
+      // Show error with retry option
+      _showRetrySnackBar(errorMessage, messageText);
+      
     } finally {
       if (mounted) {
         setState(() {
@@ -1356,6 +1382,116 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         });
       }
     }
+  }
+
+  // Show quick feedback for user actions
+  void _showQuickFeedback(String message, Color color) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: color,
+          duration: const Duration(milliseconds: 1500),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+    }
+  }
+
+  // Show error with retry functionality
+  void _showRetrySnackBar(String errorMessage, String originalMessage) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              // Restore message and try again
+              _messageController.text = originalMessage;
+              _sendMessage();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  // Auto-refresh functionality for real-time experience
+  Future<void> _refreshChatData() async {
+    try {
+      // Refresh chat person details
+      await _loadChatPersonDetails();
+      
+      // Refresh usernames cache
+      await _cacheUsernames();
+      
+      _showQuickFeedback('Chat refreshed', Colors.blue);
+    } catch (e) {
+      _showQuickFeedback('Failed to refresh', Colors.orange);
+    }
+  }
+
+  // Build connection status indicator for Ajax-type system
+  Widget _buildConnectionIndicator(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: _isConnected 
+        ? Icon(
+            Icons.wifi,
+            size: 16,
+            color: theme.brightness == Brightness.dark ? Colors.green : Colors.white,
+          )
+        : GestureDetector(
+            onTap: _checkConnectionAndRefresh,
+            child: Icon(
+              Icons.wifi_off,
+              size: 16,
+              color: theme.brightness == Brightness.dark ? Colors.red : Colors.orange,
+            ),
+          ),
+    );
+  }
+
+  // Check connection status and refresh if needed
+  Future<void> _checkConnectionAndRefresh() async {
+    try {
+      // Simple connectivity test
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+      
+      if (!_isConnected) {
+        setState(() {
+          _isConnected = true;
+        });
+        _showQuickFeedback('Connection restored!', Colors.green);
+      }
+      
+      // Auto-refresh data
+      await _refreshChatData();
+    } catch (e) {
+      setState(() {
+        _isConnected = false;
+      });
+      _showQuickFeedback('No internet connection', Colors.red);
+    }
+  }
+
+  // Initialize connection monitoring
+  void _startConnectionMonitoring() {
+    _connectionCheckTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      _checkConnectionAndRefresh();
+    });
   }
 
   // Start an audio call

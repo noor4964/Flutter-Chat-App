@@ -11,6 +11,11 @@ import 'package:universal_io/io.dart';
 import 'package:path/path.dart' as path;
 import 'package:http_parser/http_parser.dart';
 import 'dart:typed_data';
+import 'dart:async';
+import '../../utils/user_friendly_error_handler.dart';
+import '../../widgets/common/loading_overlay.dart';
+import '../../widgets/common/navigation_helper.dart';
+import '../../widgets/common/network_image_with_fallback.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -81,8 +86,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           setState(() {
             _isLoading = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to load profile data')),
+          UserFriendlyErrorHandler.showErrorSnackBar(
+            context,
+            e,
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => _loadUserProfile(),
+            ),
           );
         }
       }
@@ -118,11 +129,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _isSubmitting = false;
           });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Profile updated successfully'),
-              backgroundColor: Colors.green,
-            ),
+          UserFriendlyErrorHandler.showSuccessSnackBar(
+            context,
+            'Profile updated successfully',
           );
         }
       } catch (e) {
@@ -132,10 +141,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _isSubmitting = false;
           });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to update profile: ${e.toString()}'),
-              backgroundColor: Colors.red,
+          UserFriendlyErrorHandler.showErrorSnackBar(
+            context,
+            e,
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => _updateProfile(),
             ),
           );
         }
@@ -318,351 +330,341 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('My Profile'),
-        elevation: 0,
+      appBar: SimplifiedAppBar(
+        title: 'My Profile',
         actions: [
           IconButton(
             icon: Icon(Icons.help_outline),
             onPressed: () {
-              // Show a help dialog
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: Text('Profile Help'),
-                  content: Text(
-                      'This screen allows you to update your profile information.'
-                      '\n\n• Tap on your profile picture to change it'
-                      '\n• Fill in your details and tap Save to update'
-                      '\n• Your email address cannot be changed'),
-                  actions: [
-                    TextButton(
-                      child: Text('Got it'),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
+              NavigationHelper.showConfirmDialog(
+                context,
+                title: 'Profile Help',
+                content:
+                    'This screen allows you to update your profile information.'
+                    '\n\n• Tap on your profile picture to change it'
+                    '\n• Fill in your details and tap Save to update'
+                    '\n• Your email address cannot be changed',
+                confirmText: 'Got it',
+                onConfirm: () {},
               );
             },
           ),
         ],
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Column(
-                children: [
-                  // Profile Header Section
-                  Container(
-                    padding: EdgeInsets.only(bottom: 24),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer.withOpacity(0.3),
-                      borderRadius: BorderRadius.only(
-                        bottomLeft: Radius.circular(30),
-                        bottomRight: Radius.circular(30),
+      body: LoadingOverlay(
+        isLoading: _isLoading,
+        message: 'Loading profile...',
+        child: _isLoading
+            ? Container() // Empty container when loading
+            : SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Profile Header Section
+                    Container(
+                      padding: EdgeInsets.only(bottom: 24),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer.withOpacity(0.3),
+                        borderRadius: BorderRadius.only(
+                          bottomLeft: Radius.circular(30),
+                          bottomRight: Radius.circular(30),
+                        ),
                       ),
-                    ),
-                    child: Column(
-                      children: [
-                        SizedBox(height: 20),
-                        Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            GestureDetector(
-                              onTap: _pickImage,
-                              child: Container(
+                      child: Column(
+                        children: [
+                          SizedBox(height: 20),
+                          Stack(
+                            alignment: Alignment.bottomRight,
+                            children: [
+                              GestureDetector(
+                                onTap: _pickImage,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: colorScheme.primary,
+                                      width: 4,
+                                    ),
+                                  ),
+                                  child: _buildProfileImage(),
+                                ),
+                              ),
+                              Container(
+                                padding: EdgeInsets.all(4),
                                 decoration: BoxDecoration(
+                                  color: colorScheme.primary,
                                   shape: BoxShape.circle,
                                   border: Border.all(
-                                    color: colorScheme.primary,
-                                    width: 4,
+                                    color: Theme.of(context)
+                                        .scaffoldBackgroundColor,
+                                    width: 3,
                                   ),
                                 ),
-                                child: CircleAvatar(
-                                  radius: 64,
-                                  backgroundColor: colorScheme.primaryContainer,
-                                  backgroundImage: _getProfileImage(),
-                                  child: (_imageFile == null &&
-                                          _profilePictureUrl == null)
-                                      ? Icon(Icons.person,
-                                          size: 64, color: colorScheme.primary)
-                                      : null,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color:
-                                      Theme.of(context).scaffoldBackgroundColor,
-                                  width: 3,
-                                ),
-                              ),
-                              child: IconButton(
-                                icon: Icon(Icons.camera_alt,
-                                    color: Colors.white, size: 20),
-                                onPressed: _pickImage,
-                                constraints: BoxConstraints(
-                                  minWidth: 36,
-                                  minHeight: 36,
-                                ),
-                                padding: EdgeInsets.zero,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 16),
-                        Text(
-                          _usernameController.text.isEmpty
-                              ? (user?.displayName ?? 'Update your profile')
-                              : _usernameController.text,
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          user?.email ?? '',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Form Section
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Personal Information',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                          SizedBox(height: 16),
-
-                          // Username field
-                          TextFormField(
-                            controller: _usernameController,
-                            decoration: InputDecoration(
-                              labelText: 'Username',
-                              prefixIcon: Icon(Icons.person),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter a username';
-                              }
-                              return null;
-                            },
-                          ),
-                          SizedBox(height: 16),
-
-                          // Email field (read-only)
-                          TextFormField(
-                            controller: _emailController,
-                            readOnly: _readOnlyEmail,
-                            decoration: InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(Icons.email),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _readOnlyEmail ? Icons.lock : Icons.lock_open,
-                                  color: _readOnlyEmail
-                                      ? Colors.grey
-                                      : colorScheme.primary,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _readOnlyEmail = !_readOnlyEmail;
-                                  });
-                                  if (_readOnlyEmail) {
-                                    // Reset to original email if locked again
-                                    _emailController.text = user?.email ?? '';
-                                  }
-                                },
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter an email';
-                              }
-                              // Basic email validation
-                              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                                  .hasMatch(value)) {
-                                return 'Please enter a valid email';
-                              }
-                              return null;
-                            },
-                          ),
-                          SizedBox(height: 24),
-
-                          Text(
-                            'Additional Information',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                          SizedBox(height: 16),
-
-                          // Bio field
-                          TextFormField(
-                            controller: _bioController,
-                            decoration: InputDecoration(
-                              labelText: 'Bio',
-                              prefixIcon: Icon(Icons.description),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                            ),
-                            maxLines: 3,
-                          ),
-                          SizedBox(height: 16),
-
-                          // Phone field
-                          TextFormField(
-                            controller: _phoneController,
-                            decoration: InputDecoration(
-                              labelText: 'Phone',
-                              prefixIcon: Icon(Icons.phone),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                            ),
-                            keyboardType: TextInputType.phone,
-                          ),
-                          SizedBox(height: 16),
-
-                          // Location field
-                          TextFormField(
-                            controller: _locationController,
-                            decoration: InputDecoration(
-                              labelText: 'Location',
-                              prefixIcon: Icon(Icons.location_on),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                            ),
-                          ),
-                          SizedBox(height: 32),
-
-                          // Save button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: _isSubmitting ? null : _updateProfile,
-                              style: ElevatedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                backgroundColor: colorScheme.primary,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: _isSubmitting
-                                  ? CircularProgressIndicator(
-                                      color: Colors.white)
-                                  : Text(
-                                      'Save Changes',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          SizedBox(height: 16),
-
-                          // Sign out button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: OutlinedButton(
-                              onPressed: () async {
-                                // Show confirmation dialog
-                                bool? confirm = await showDialog<bool>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: Text('Sign Out'),
-                                    content: Text(
-                                        'Are you sure you want to sign out?'),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.of(context).pop(false),
-                                        child: Text('Cancel'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () =>
-                                            Navigator.of(context).pop(true),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.red,
-                                        ),
-                                        child: Text('Sign Out'),
-                                      ),
-                                    ],
+                                child: IconButton(
+                                  icon: Icon(Icons.camera_alt,
+                                      color: Colors.white, size: 20),
+                                  onPressed: _pickImage,
+                                  constraints: BoxConstraints(
+                                    minWidth: 36,
+                                    minHeight: 36,
                                   ),
-                                );
-
-                                if (confirm == true) {
-                                  await FirebaseAuth.instance.signOut();
-                                  Navigator.pushReplacementNamed(
-                                      context, '/login');
-                                }
-                              },
-                              style: OutlinedButton.styleFrom(
-                                side: BorderSide(color: Colors.red),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                  padding: EdgeInsets.zero,
                                 ),
                               ),
-                              child: Text(
-                                'Sign Out',
-                                style: TextStyle(
-                                  color: Colors.red,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                            ],
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            _usernameController.text.isEmpty
+                                ? (user?.displayName ?? 'Update your profile')
+                                : _usernameController.text,
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            user?.email ?? '',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.grey[600],
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                ],
+
+                    // Form Section
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Personal Information',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.primary,
+                              ),
+                            ),
+                            SizedBox(height: 16),
+
+                            // Username field
+                            TextFormField(
+                              controller: _usernameController,
+                              decoration: InputDecoration(
+                                labelText: 'Username',
+                                prefixIcon: Icon(Icons.person),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.withOpacity(0.1),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter a username';
+                                }
+                                return null;
+                              },
+                            ),
+                            SizedBox(height: 16),
+
+                            // Email field (read-only)
+                            TextFormField(
+                              controller: _emailController,
+                              readOnly: _readOnlyEmail,
+                              decoration: InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: Icon(Icons.email),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.withOpacity(0.1),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _readOnlyEmail
+                                        ? Icons.lock
+                                        : Icons.lock_open,
+                                    color: _readOnlyEmail
+                                        ? Colors.grey
+                                        : colorScheme.primary,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _readOnlyEmail = !_readOnlyEmail;
+                                    });
+                                    if (_readOnlyEmail) {
+                                      // Reset to original email if locked again
+                                      _emailController.text = user?.email ?? '';
+                                    }
+                                  },
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter an email';
+                                }
+                                // Basic email validation
+                                if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                                    .hasMatch(value)) {
+                                  return 'Please enter a valid email';
+                                }
+                                return null;
+                              },
+                            ),
+                            SizedBox(height: 24),
+
+                            Text(
+                              'Additional Information',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.primary,
+                              ),
+                            ),
+                            SizedBox(height: 16),
+
+                            // Bio field
+                            TextFormField(
+                              controller: _bioController,
+                              decoration: InputDecoration(
+                                labelText: 'Bio',
+                                prefixIcon: Icon(Icons.description),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.withOpacity(0.1),
+                              ),
+                              maxLines: 3,
+                            ),
+                            SizedBox(height: 16),
+
+                            // Phone field
+                            TextFormField(
+                              controller: _phoneController,
+                              decoration: InputDecoration(
+                                labelText: 'Phone',
+                                prefixIcon: Icon(Icons.phone),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.withOpacity(0.1),
+                              ),
+                              keyboardType: TextInputType.phone,
+                            ),
+                            SizedBox(height: 16),
+
+                            // Location field
+                            TextFormField(
+                              controller: _locationController,
+                              decoration: InputDecoration(
+                                labelText: 'Location',
+                                prefixIcon: Icon(Icons.location_on),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.withOpacity(0.1),
+                              ),
+                            ),
+                            SizedBox(height: 32),
+
+                            // Save button
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: ElevatedButton(
+                                onPressed:
+                                    _isSubmitting ? null : _updateProfile,
+                                style: ElevatedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  backgroundColor: colorScheme.primary,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: _isSubmitting
+                                    ? CircularProgressIndicator(
+                                        color: Colors.white)
+                                    : Text(
+                                        'Save Changes',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            SizedBox(height: 16),
+
+                            // Sign out button
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: OutlinedButton(
+                                onPressed: () async {
+                                  // Show confirmation dialog
+                                  bool? confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: Text('Sign Out'),
+                                      content: Text(
+                                          'Are you sure you want to sign out?'),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.of(context).pop(false),
+                                          child: Text('Cancel'),
+                                        ),
+                                        ElevatedButton(
+                                          onPressed: () =>
+                                              Navigator.of(context).pop(true),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.red,
+                                          ),
+                                          child: Text('Sign Out'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+
+                                  if (confirm == true) {
+                                    await FirebaseAuth.instance.signOut();
+                                    Navigator.pushReplacementNamed(
+                                        context, '/login');
+                                  }
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.red),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: Text(
+                                  'Sign Out',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 
@@ -678,5 +680,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return NetworkImage(_profilePictureUrl!);
     }
     return null;
+  }
+
+  // Helper method to safely build profile image with error handling
+  Widget _buildProfileImage() {
+    if (_imageFile != null) {
+      if (kIsWeb && _webImage != null) {
+        return CircleAvatar(
+          radius: 64,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          backgroundImage: MemoryImage(_webImage!),
+        );
+      } else if (!kIsWeb) {
+        return CircleAvatar(
+          radius: 64,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          backgroundImage: FileImage(_imageFile as File),
+        );
+      }
+    } else if (_profilePictureUrl != null) {
+      return NetworkImageWithFallback(
+        imageUrl: _profilePictureUrl!,
+        width: 128,
+        height: 128,
+        borderRadius: BorderRadius.circular(64),
+        fit: BoxFit.cover,
+        errorWidget: CircleAvatar(
+          radius: 64,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          child: Icon(Icons.person,
+              size: 64, color: Theme.of(context).colorScheme.primary),
+        ),
+      );
+    }
+
+    return CircleAvatar(
+      radius: 64,
+      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+      child: Icon(Icons.person,
+          size: 64, color: Theme.of(context).colorScheme.primary),
+    );
   }
 }
