@@ -1,5 +1,6 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_chat_app/models/message_reaction.dart';
+import 'package:flutter_chat_app/widgets/message_reaction_widgets.dart';
 
 class ModernMessageBubble extends StatelessWidget {
   final String message;
@@ -10,6 +11,10 @@ class ModernMessageBubble extends StatelessWidget {
   final String? imageUrl;
   final Color primaryColor;
   final BorderRadius borderRadius;
+  final List<MessageReaction> reactions;
+  final Function(String emoji)? onReactionAdd;
+  final VoidCallback? onLongPress;
+  final String currentUserId;
 
   const ModernMessageBubble({
     Key? key,
@@ -21,6 +26,10 @@ class ModernMessageBubble extends StatelessWidget {
     this.imageUrl,
     required this.primaryColor,
     required this.borderRadius,
+    this.reactions = const [],
+    this.onReactionAdd,
+    this.onLongPress,
+    required this.currentUserId,
   }) : super(key: key);
 
   @override
@@ -144,58 +153,78 @@ class ModernMessageBubble extends StatelessWidget {
       Color bubbleColor, Color textColor) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.7,
-        ),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4.0),
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(isMe ? borderRadius.topLeft.x : 4),
-              topRight: Radius.circular(isMe ? 4 : borderRadius.topRight.x),
-              bottomLeft: Radius.circular(borderRadius.bottomLeft.x),
-              bottomRight: Radius.circular(borderRadius.bottomRight.x),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.7,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              messageContent,
-              const SizedBox(height: 5),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    time,
-                    style: TextStyle(
-                      color: textColor.withOpacity(0.7),
-                      fontSize: 12,
-                    ),
+            child: GestureDetector(
+              onLongPress: onLongPress,
+              onSecondaryTap: onLongPress, // Right-click for web
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 4.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(isMe ? borderRadius.topLeft.x : 4),
+                    topRight: Radius.circular(isMe ? 4 : borderRadius.topRight.x),
+                    bottomLeft: Radius.circular(borderRadius.bottomLeft.x),
+                    bottomRight: Radius.circular(borderRadius.bottomRight.x),
                   ),
-                  if (isMe) ...[
-                    const SizedBox(width: 5),
-                    Icon(
-                      isRead ? Icons.done_all : Icons.done,
-                      size: 14,
-                      color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
                     ),
                   ],
-                ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    messageContent,
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          time,
+                          style: TextStyle(
+                            color: textColor.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 5),
+                          Icon(
+                            isRead ? Icons.done_all : Icons.done,
+                            size: 14,
+                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
+          // Reactions display
+          if (reactions.isNotEmpty)
+            MessageReactionDisplay(
+              reactionSummaries: _getReactionSummaries(),
+              onReactionTap: (emoji) {
+                if (onReactionAdd != null) {
+                  onReactionAdd!(emoji);
+                }
+              },
+              currentUserId: currentUserId,
+            ),
+        ],
       ),
     );
   }
@@ -204,46 +233,66 @@ class ModernMessageBubble extends StatelessWidget {
       Color bubbleColor, Color textColor) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.7,
-        ),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4.0),
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.circular(borderRadius.topLeft.x),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              messageContent,
-              const SizedBox(height: 5),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    time,
-                    style: TextStyle(
-                      color: textColor.withOpacity(0.7),
-                      fontSize: 12,
-                    ),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 5),
-                    Icon(
-                      isRead ? Icons.done_all : Icons.done,
-                      size: 14,
-                      color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.7,
+            ),
+            child: GestureDetector(
+              onLongPress: onLongPress,
+              onSecondaryTap: onLongPress, // Web right-click support
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 4.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.circular(borderRadius.topLeft.x),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    messageContent,
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          time,
+                          style: TextStyle(
+                            color: textColor.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 5),
+                          Icon(
+                            isRead ? Icons.done_all : Icons.done,
+                            size: 14,
+                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
-                ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
+          // Reactions display
+          if (reactions.isNotEmpty)
+            MessageReactionDisplay(
+              reactionSummaries: _getReactionSummaries(),
+              onReactionTap: (emoji) {
+                if (onReactionAdd != null) {
+                  onReactionAdd!(emoji);
+                }
+              },
+              currentUserId: currentUserId,
+            ),
+        ],
       ),
     );
   }
@@ -252,51 +301,71 @@ class ModernMessageBubble extends StatelessWidget {
       Color bubbleColor, Color textColor) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.7,
-        ),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4.0),
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(isMe ? borderRadius.topLeft.x : 0),
-              topRight: Radius.circular(isMe ? 0 : borderRadius.topRight.x),
-              bottomLeft: Radius.circular(borderRadius.bottomLeft.x),
-              bottomRight: Radius.circular(borderRadius.bottomRight.x),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.7,
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              messageContent,
-              const SizedBox(height: 5),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    time,
-                    style: TextStyle(
-                      color: textColor.withOpacity(0.7),
-                      fontSize: 12,
-                    ),
+            child: GestureDetector(
+              onLongPress: onLongPress,
+              onSecondaryTap: onLongPress, // Web right-click support
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 4.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(isMe ? borderRadius.topLeft.x : 0),
+                    topRight: Radius.circular(isMe ? 0 : borderRadius.topRight.x),
+                    bottomLeft: Radius.circular(borderRadius.bottomLeft.x),
+                    bottomRight: Radius.circular(borderRadius.bottomRight.x),
                   ),
-                  if (isMe) ...[
-                    const SizedBox(width: 5),
-                    Icon(
-                      isRead ? Icons.done_all : Icons.done,
-                      size: 14,
-                      color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    messageContent,
+                    const SizedBox(height: 5),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          time,
+                          style: TextStyle(
+                            color: textColor.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 5),
+                          Icon(
+                            isRead ? Icons.done_all : Icons.done,
+                            size: 14,
+                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
-                ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
+          // Reactions display
+          if (reactions.isNotEmpty)
+            MessageReactionDisplay(
+              reactionSummaries: _getReactionSummaries(),
+              onReactionTap: (emoji) {
+                if (onReactionAdd != null) {
+                  onReactionAdd!(emoji);
+                }
+              },
+              currentUserId: currentUserId,
+            ),
+        ],
       ),
     );
   }
@@ -374,5 +443,26 @@ class ModernMessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<MessageReactionSummary> _getReactionSummaries() {
+    final Map<String, List<String>> reactionMap = {};
+    
+    for (final reaction in reactions) {
+      if (reactionMap.containsKey(reaction.emoji)) {
+        reactionMap[reaction.emoji]!.add(reaction.userId);
+      } else {
+        reactionMap[reaction.emoji] = [reaction.userId];
+      }
+    }
+
+    return reactionMap.entries.map((entry) {
+      return MessageReactionSummary(
+        emoji: entry.key,
+        count: entry.value.length,
+        userIds: entry.value,
+        hasCurrentUserReacted: entry.value.contains(currentUserId),
+      );
+    }).toList();
   }
 }

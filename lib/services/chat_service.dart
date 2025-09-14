@@ -1,8 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
+import 'package:flutter_chat_app/models/message_reaction.dart';
 import '../services/firebase_config.dart';
 import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/services/chat_notification_service.dart';
@@ -461,9 +461,6 @@ class ChatService {
         .orderBy('timestamp', descending: true)
         .snapshots();
 
-    // Create a stream that will update read status
-    final chatStream = _firestore.collection('chats').doc(chatId).snapshots();
-
     // Combine both streams to ensure we get updates when either messages or read statuses change
     return messagesStream.map((snapshot) {
       print('Message stream updated with ${snapshot.docs.length} messages');
@@ -505,5 +502,103 @@ class ChatService {
       print('Error in messages stream: $error');
       return <Message>[];
     });
+  }
+
+  // Add or remove a reaction to a message
+  Future<void> toggleMessageReaction(
+    String chatId,
+    String messageId,
+    String emoji,
+    String userId,
+    String userDisplayName,
+  ) async {
+    if (_isWindowsWithoutFirebase) return;
+
+    try {
+      final messageRef = _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId);
+
+      await _firestore.runTransaction((transaction) async {
+        DocumentSnapshot messageSnapshot = await transaction.get(messageRef);
+
+        if (!messageSnapshot.exists) {
+          throw Exception("Message does not exist!");
+        }
+
+        final messageData = messageSnapshot.data() as Map<String, dynamic>;
+        List<Map<String, dynamic>> reactions =
+            List<Map<String, dynamic>>.from(messageData['reactions'] ?? []);
+
+        // Check if the user has already reacted with this emoji
+        final existingReactionIndex = reactions.indexWhere((reaction) =>
+            reaction['userId'] == userId && reaction['emoji'] == emoji);
+
+        if (existingReactionIndex != -1) {
+          // User already reacted with this emoji, remove it
+          reactions.removeAt(existingReactionIndex);
+          print('Removed reaction $emoji from message $messageId by user $userId');
+        } else {
+          // Add new reaction
+          reactions.add({
+            'userId': userId,
+            'emoji': emoji,
+            'timestamp': FieldValue.serverTimestamp(),
+            'userDisplayName': userDisplayName,
+          });
+          print('Added reaction $emoji to message $messageId by user $userId');
+        }
+
+        transaction.update(messageRef, {'reactions': reactions});
+      });
+    } catch (e) {
+      print('Error toggling message reaction: $e');
+      throw e;
+    }
+  }
+
+  // Get reaction summary for a message
+  Future<List<MessageReactionSummary>> getMessageReactionSummary(
+    String chatId,
+    String messageId,
+    String currentUserId,
+  ) async {
+    if (_isWindowsWithoutFirebase) return [];
+
+    try {
+      final messageDoc = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .get();
+
+      if (!messageDoc.exists) return [];
+
+      final messageData = messageDoc.data() as Map<String, dynamic>;
+      final reactions = (messageData['reactions'] as List<dynamic>?)
+              ?.map((r) => MessageReaction.fromJson(r as Map<String, dynamic>))
+              .toList() ??
+          [];
+
+      // Group reactions by emoji
+      final emojiGroups = <String, List<MessageReaction>>{};
+      for (final reaction in reactions) {
+        emojiGroups.putIfAbsent(reaction.emoji, () => []).add(reaction);
+      }
+
+      return emojiGroups.keys
+          .map((emoji) => MessageReactionSummary.fromReactions(
+                reactions,
+                emoji,
+                currentUserId,
+              ))
+          .toList();
+    } catch (e) {
+      print('Error getting reaction summary: $e');
+      return [];
+    }
   }
 }

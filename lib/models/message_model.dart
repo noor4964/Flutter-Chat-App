@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_chat_app/models/message_reaction.dart';
 
 class Message {
   final String id;
@@ -11,6 +12,7 @@ class Message {
   final String type;
   final DateTime?
       readTimestamp; // Added readTimestamp to track when message was read
+  final List<MessageReaction> reactions; // Added reactions field
 
   Message({
     required this.id,
@@ -22,6 +24,7 @@ class Message {
     this.readBy, // Added readBy parameter
     this.type = 'text',
     this.readTimestamp, // Added readTimestamp parameter
+    this.reactions = const [], // Added reactions parameter
   });
 
   factory Message.fromJson(Map<String, dynamic> json, String currentUserId) {
@@ -87,6 +90,10 @@ class Message {
           (json['readBy'] ?? []).whereType<String>()), // Parse readBy field
       type: json['type'] ?? 'text',
       readTimestamp: readTime,
+      reactions: (json['reactions'] as List<dynamic>?)
+              ?.map((r) => MessageReaction.fromJson(r as Map<String, dynamic>))
+              .toList() ??
+          [], // Parse reactions field
     );
   }
 
@@ -99,6 +106,28 @@ class Message {
       'readBy': readBy ?? [],
       'type': type,
       'readTimestamp': readTimestamp,
+      'reactions': reactions.map((r) => r.toJson()).toList(),
     };
+  }
+
+  // Helper methods for reactions
+  List<MessageReactionSummary> getReactionSummaries(String currentUserId) {
+    final emojiGroups = <String, List<MessageReaction>>{};
+    
+    for (final reaction in reactions) {
+      emojiGroups.putIfAbsent(reaction.emoji, () => []).add(reaction);
+    }
+    
+    return emojiGroups.keys
+        .map((emoji) => MessageReactionSummary.fromReactions(
+              reactions,
+              emoji,
+              currentUserId,
+            ))
+        .toList();
+  }
+
+  bool hasReactionFromUser(String userId, String emoji) {
+    return reactions.any((r) => r.userId == userId && r.emoji == emoji);
   }
 }

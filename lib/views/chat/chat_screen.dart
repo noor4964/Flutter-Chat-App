@@ -5,7 +5,8 @@ import 'package:flutter_chat_app/services/chat_service.dart';
 import 'package:flutter_chat_app/services/chat_notification_service.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
-import 'package:flutter_chat_app/widgets/message_bubble.dart';
+import 'package:flutter_chat_app/widgets/modern_message_bubble.dart';
+import 'package:flutter_chat_app/widgets/message_reaction_widgets.dart';
 import 'package:flutter_chat_app/views/user_profile_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
@@ -16,6 +17,12 @@ import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
 import 'dart:async';
 import '../../../utils/user_friendly_error_handler.dart';
+
+enum MessageStatus {
+  sending,
+  sent,
+  seen,
+}
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -55,6 +62,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Timer for periodically marking messages as read
   Timer? _messageReadTimer;
 
+  // Keyboard state tracking for consistent scrolling
+  double _lastKeyboardHeight = 0.0;
+  bool _isKeyboardAnimating = false;
+
   @override
   void initState() {
     super.initState();
@@ -86,6 +97,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Initialize Ajax-type connection monitoring
     _startConnectionMonitoring();
+
+    // Add keyboard listener to handle consistent scrolling
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _setupKeyboardListener();
+    });
   }
 
   void _onMessageTextChanged() {
@@ -300,11 +316,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  // Update the _scrollToBottom method for more controlled scrolling
   void _scrollToBottom() {
-    if (_scrollController.hasClients) {
+    if (_scrollController.hasClients && mounted && !_isKeyboardAnimating) {
       _scrollController.animateTo(
         0,
-        duration: const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     }
@@ -329,6 +346,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isTabletOrDesktop = MediaQuery.of(context).size.width > 600;
+    
+    // Track keyboard height changes for consistent scrolling
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    
+    // Handle keyboard appearance/disappearance consistently
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (keyboardHeight != _lastKeyboardHeight && !_isKeyboardAnimating) {
+        _handleKeyboardChange(keyboardHeight > _lastKeyboardHeight);
+        _lastKeyboardHeight = keyboardHeight;
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -589,8 +617,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
-              // Chat messages area
-              Expanded(
+              // Chat messages area - wrapped in flexible to prevent overflow
+              Flexible(
                 child: Container(
                   decoration: BoxDecoration(
                     color: colorScheme.surface.withOpacity(0.5),
@@ -648,6 +676,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                 padding: const EdgeInsets.symmetric(
                                     vertical: 16, horizontal: 8),
                                 itemCount: _groupedMessages.length,
+                                // Add physics to prevent over-scrolling during keyboard events
+                                physics: const ClampingScrollPhysics(),
                                 itemBuilder: (context, index) {
                                 final dateKey =
                                     _groupedMessages.keys.elementAt(index);
@@ -702,11 +732,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
                                     // Messages for this date - organized by sender
                                     ...messagesForDate.map((message) {
-                                      String senderName =
-                                          _usernamesCache[message.sender] ??
-                                              'Unknown';
                                       bool isFirstInGroup = true;
-                                      bool isLastInGroup = true;
 
                                       // Find position in consecutive messages from same sender
                                       final senderMessages = messagesForDate
@@ -725,18 +751,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                             .inMinutes;
 
                                         isFirstInGroup = timeDiff > 2;
-                                      }
-
-                                      if (messageIdx <
-                                          senderMessages.length - 1) {
-                                        // Check if next message is less than 2 minutes apart
-                                        final nextMessage =
-                                            senderMessages[messageIdx + 1];
-                                        final timeDiff = nextMessage.timestamp
-                                            .difference(message.timestamp)
-                                            .inMinutes;
-
-                                        isLastInGroup = timeDiff > 2;
                                       }
 
                                       return Hero(
@@ -815,32 +829,22 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                       margin:
                                                           const EdgeInsets.only(
                                                               bottom: 4),
-                                                      child: MessageBubble(
-                                                        sender: senderName,
-                                                        text: message.text,
-                                                        timestamp:
-                                                            message.timestamp,
+                                                      child: ModernMessageBubble(
+                                                        message: message.text,
+                                                        time: DateFormat('HH:mm').format(message.timestamp),
                                                         isMe: message.isMe,
                                                         isRead: message.isRead,
-                                                        isFirstInGroup:
-                                                            isFirstInGroup,
-                                                        isLastInGroup:
-                                                            isLastInGroup,
-                                                        status: message.isMe
-                                                            ? (message.isRead
-                                                                ? MessageStatus
-                                                                    .seen
-                                                                : MessageStatus
-                                                                    .sent)
-                                                            : MessageStatus
-                                                                .sent,
-                                                        seenTimestamp: message
-                                                                    .isRead &&
-                                                                message.isMe
-                                                            ? message
-                                                                    .readTimestamp ??
-                                                                DateTime.now()
-                                                            : null,
+                                                        bubbleStyle: 'Modern',
+                                                        primaryColor: Theme.of(context).primaryColor,
+                                                        borderRadius: const BorderRadius.all(Radius.circular(18)),
+                                                        reactions: message.reactions,
+                                                        currentUserId: FirebaseAuth.instance.currentUser?.uid ?? '',
+                                                        onReactionAdd: (emoji) {
+                                                          _toggleMessageReaction(message.id, emoji);
+                                                        },
+                                                        onLongPress: () {
+                                                          _showReactionPicker(message);
+                                                        },
                                                       ),
                                                     ),
                                                   ),
@@ -967,17 +971,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                       _isEmojiPickerOpen = false;
                                     });
                                   }
-
-                                  // Subtle auto-scroll when tapping on input field
-                                  // to ensure user can see recent messages
-                                  if (_scrollController.hasClients) {
-                                    _scrollController.animateTo(
-                                      _scrollController.position.pixels + 50,
-                                      duration:
-                                          const Duration(milliseconds: 200),
-                                      curve: Curves.easeOutCubic,
-                                    );
-                                  }
+                                  // Remove the auto-scroll that was causing issues
+                                },
+                                // Add focus listener for better keyboard handling
+                                onEditingComplete: () {
+                                  // Ensure scroll position is maintained
+                                  _ensureScrollPosition();
                                 },
                               ),
                             ),
@@ -1015,24 +1014,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                     shape: const CircleBorder(),
                                     clipBehavior: Clip.antiAlias,
                                     child: IconButton(
-                                      icon: _isSending
-                                          ? const SizedBox(
-                                              width: 24,
-                                              height: 24,
-                                              child: CircularProgressIndicator(
-                                                color: Colors.white,
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(Icons.send_rounded,
-                                              color: Colors.white),
-                                      onPressed:
-                                          _messageController.text.isNotEmpty
-                                              ? _sendMessage
-                                              : () {
-                                                  // Subtle indication that user needs to enter text
-                                                  HapticFeedback.lightImpact();
-                                                },
+                                      // Removed spinner icon during send; always show send icon
+                                      icon: const Icon(Icons.send_rounded, color: Colors.white),
+                                      onPressed: (_messageController.text.isNotEmpty && !_isSending)
+                                          ? _sendMessage
+                                          : () {
+                                              // Subtle indication that user needs to enter text
+                                              HapticFeedback.lightImpact();
+                                            },
                                       tooltip: 'Send',
                                       splashColor: Colors.white24,
                                     ),
@@ -1145,6 +1134,64 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _showReactionPicker(Message message) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'React to message',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                MessageReactionPicker(
+                  onEmojiSelected: (emoji) {
+                    Navigator.of(context).pop();
+                    _toggleMessageReaction(message.id, emoji);
+                  },
+                  onDismiss: () {
+                    Navigator.of(context).pop();
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showMessageOptions(message);
+                  },
+                  child: const Text('More options'),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showMessageOptions(Message message) {
     showModalBottomSheet(
       context: context,
@@ -1205,6 +1252,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  Future<void> _toggleMessageReaction(String messageId, String emoji) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      
+      await _chatService.toggleMessageReaction(
+        widget.chatId,
+        messageId,
+        emoji,
+        user.uid,
+        user.displayName ?? 'Anonymous',
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to add reaction: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showAttachmentOptions() {
@@ -1345,14 +1414,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Clear input immediately for better UX (optimistic)
     _messageController.clear();
 
-    // Reset reply state and show sending state
+    // Reset reply state and prevent double-send (no spinner UI)
     setState(() {
       _isSending = true;
       _replyingTo = '';
     });
 
-    // Scroll to bottom immediately to show optimistic behavior
-    _scrollToBottom();
+    // Scroll to bottom with slight delay to avoid keyboard conflicts
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _scrollToBottom();
+    });
 
     try {
       // Send message to Firebase
@@ -1361,9 +1432,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         messageText,
         user!.uid,
       );
-
-      // Show success feedback for offline scenarios
-      _showQuickFeedback('Message sent', Colors.green);
 
     } catch (e) {
       // Enhanced error handling with user-friendly messages
@@ -1433,7 +1501,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       // Refresh usernames cache
       await _cacheUsernames();
       
-      _showQuickFeedback('Chat refreshed', Colors.blue);
     } catch (e) {
       _showQuickFeedback('Failed to refresh', Colors.orange);
     }
@@ -1681,5 +1748,65 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  // Add keyboard listener setup method
+  void _setupKeyboardListener() {
+    // Listen to keyboard visibility changes
+    final mediaQuery = MediaQuery.of(context);
+    final keyboardHeight = mediaQuery.viewInsets.bottom;
+    
+    // Store initial keyboard state
+    _lastKeyboardHeight = keyboardHeight;
+  }
+
+  // Add keyboard change handler
+  void _handleKeyboardChange(bool isKeyboardAppearing) {
+    if (_isKeyboardAnimating) return;
+    
+    _isKeyboardAnimating = true;
+    
+    if (isKeyboardAppearing) {
+      // Keyboard is appearing - gently scroll to show recent messages
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (_scrollController.hasClients && mounted) {
+          _scrollController.animateTo(
+            0, // Scroll to the most recent message
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          ).then((_) {
+            _isKeyboardAnimating = false;
+          });
+        } else {
+          _isKeyboardAnimating = false;
+        }
+      });
+    } else {
+      // Keyboard is disappearing - maintain current position
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _isKeyboardAnimating = false;
+      });
+    }
+  }
+
+  // Add scroll position maintenance method
+  void _ensureScrollPosition() {
+    if (_scrollController.hasClients && mounted) {
+      // Maintain current scroll position without jarring movements
+      final currentPosition = _scrollController.position.pixels;
+      
+      // Only adjust if we're very close to the bottom (within 100 pixels)
+      if (currentPosition < 100) {
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (_scrollController.hasClients && mounted) {
+            _scrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+    }
   }
 }
