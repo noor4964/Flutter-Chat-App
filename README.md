@@ -81,7 +81,10 @@ A comprehensive Flutter-based communication platform with real-time messaging, v
    ```sh
    flutter run
    ```
-
+ Run the application in Web:
+   ```sh
+   https://flutter-chat-app-e52b5.web.app/
+   ```
 ## Project Structure
 
 ```
