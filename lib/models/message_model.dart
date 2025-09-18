@@ -47,30 +47,39 @@ class Message {
       // If I'm the sender, message is read if anyone else read it
       List<dynamic> readByList = List<dynamic>.from(json['readBy'] ?? []);
 
-      // More explicit check: readBy contains any userId that isn't mine
-      isReadStatus = readByList
-          .where((id) => id != currentUserId && id is String)
-          .isNotEmpty;
+      // Filter out the current user and empty strings, keep only other valid user IDs
+      List<String> validReadByIds = readByList
+          .where((id) => id is String && id.isNotEmpty && id != currentUserId)
+          .cast<String>()
+          .toList();
 
-      // Debug logging for read status
-      print('Message sent by me, readBy: $readByList, isRead: $isReadStatus');
+      isReadStatus = validReadByIds.isNotEmpty;
+
+      // Enhanced debug logging for read status
+      print('📝 Message ${json['id']} sent by me:');
+      print('   📋 Raw readBy: $readByList');
+      print('   ✅ Valid readBy IDs (others): $validReadByIds');
+      print('   👁️ IsRead: $isReadStatus');
+      print('   👤 Current user: $currentUserId');
 
       // If read, use the readTimestamp when available
       if (isReadStatus && json['readTimestamp'] != null) {
         if (json['readTimestamp'] is Timestamp) {
           readTime = (json['readTimestamp'] as Timestamp).toDate();
-          print('Read timestamp found: $readTime');
+          print('   ⏰ Read timestamp: $readTime');
         } else if (json['readTimestamp'] is DateTime) {
           readTime = json['readTimestamp'] as DateTime;
-          print('Read timestamp found: $readTime');
+          print('   ⏰ Read timestamp: $readTime');
         }
       }
     } else {
       // If I'm the receiver, message is read if I read it (readBy contains my ID)
       List<dynamic> readByList = List<dynamic>.from(json['readBy'] ?? []);
       isReadStatus = readByList.contains(currentUserId);
-      print(
-          'Message received by me, readBy: $readByList, isRead: $isReadStatus');
+      print('📨 Message ${json['id']} received by me:');
+      print('   📋 ReadBy: $readByList');
+      print('   👁️ IsRead: $isReadStatus');
+      print('   👤 Current user: $currentUserId');
     }
 
     return Message(

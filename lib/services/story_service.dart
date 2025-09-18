@@ -20,6 +20,16 @@ class StoryService {
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   final ImagePicker _picker = ImagePicker();
 
+  // Request queue to prevent overwhelming Firestore
+  static final List<Future<void> Function()> _requestQueue = [];
+  static bool _isProcessingQueue = false;
+  static DateTime? _lastRequestTime;
+  static const Duration _minRequestInterval = Duration(milliseconds: 200);
+
+  // Simple cache for recent operations
+  static final Map<String, DateTime> _recentOperations = {};
+  static const Duration _cacheTimeout = Duration(seconds: 5);
+
   // Available filters for stories
   static const Map<String, Map<String, dynamic>> filters = {
     'none': {'name': 'Normal', 'description': 'No filter'},
@@ -41,6 +51,59 @@ class StoryService {
 
   // Stream of error messages that UI can listen to
   Stream<String> get onError => _errorController.stream;
+
+  // Process request queue to prevent overwhelming Firestore
+  static Future<void> _processRequestQueue() async {
+    if (_isProcessingQueue || _requestQueue.isEmpty) return;
+    
+    _isProcessingQueue = true;
+    
+    while (_requestQueue.isNotEmpty) {
+      // Ensure minimum interval between requests
+      if (_lastRequestTime != null) {
+        final timeSinceLastRequest = DateTime.now().difference(_lastRequestTime!);
+        if (timeSinceLastRequest < _minRequestInterval) {
+          await Future.delayed(_minRequestInterval - timeSinceLastRequest);
+        }
+      }
+      
+      try {
+        final request = _requestQueue.removeAt(0);
+        await request();
+        _lastRequestTime = DateTime.now();
+      } catch (e) {
+        print('❌ Error processing queued request: $e');
+        // Continue processing other requests
+      }
+    }
+    
+    _isProcessingQueue = false;
+  }
+
+  // Add request to queue
+  static Future<void> _queueRequest(Future<void> Function() request) async {
+    _requestQueue.add(request);
+    await _processRequestQueue();
+  }
+
+  // Check if operation was done recently (simple cache)
+  static bool _wasRecentlyDone(String operationKey) {
+    final lastTime = _recentOperations[operationKey];
+    if (lastTime == null) return false;
+    
+    final timeSinceOperation = DateTime.now().difference(lastTime);
+    return timeSinceOperation < _cacheTimeout;
+  }
+
+  // Mark operation as done
+  static void _markOperationDone(String operationKey) {
+    _recentOperations[operationKey] = DateTime.now();
+    
+    // Clean up old entries
+    final now = DateTime.now();
+    _recentOperations.removeWhere((key, time) => 
+      now.difference(time) > _cacheTimeout);
+  }
 
   // Helper method to check friendship status between two users
   Future<bool> _checkFriendshipStatus(String userId1, String userId2) async {
@@ -339,7 +402,7 @@ class StoryService {
     }
   }
 
-  // Create a new story with advanced options
+  // Create a new story with advanced options (with rate limiting)
   Future<void> addStory({
     required String mediaUrl,
     String caption = '',
@@ -355,58 +418,72 @@ class StoryService {
   }) async {
     if (currentUserId == null) return;
 
-    try {
-      // Get user data for the story
-      DocumentSnapshot userDoc =
-          await _firestore.collection('users').doc(currentUserId).get();
-      Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+    final operationKey = 'add_story_${currentUserId}_${DateTime.now().millisecondsSinceEpoch}';
+    
+    return _queueRequest(() async {
+      try {
+        // Get user data for the story
+        DocumentSnapshot userDoc =
+            await _firestore.collection('users').doc(currentUserId).get();
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
 
-      // Calculate expiry time (24 hours from now)
-      DateTime expiryTime = DateTime.now().add(const Duration(hours: 24));
+        // Calculate expiry time (24 hours from now)
+        DateTime expiryTime = DateTime.now().add(const Duration(hours: 24));
 
-      Story story = Story(
-        id: '', // Will be set by Firestore
-        userId: currentUserId!,
-        username: userData['username'] ?? 'Anonymous',
-        userProfileImage: userData['profileImageUrl'] ?? '',
-        mediaUrl: mediaUrl,
-        timestamp: DateTime.now(),
-        expiryTime: expiryTime,
-        caption: caption,
-        viewers: [],
-        background: background,
-        mediaType: mediaType,
-        isHighlighted: false,
-        musicInfo: musicInfo,
-        mentions: mentions,
-        location: location,
-        filter: filter,
-        reactions: [],
-        allowSharing: allowSharing,
-        replies: [],
-        privacy: privacy,
-      );
+        Story story = Story(
+          id: '', // Will be set by Firestore
+          userId: currentUserId!,
+          username: userData['username'] ?? 'Anonymous',
+          userProfileImage: userData['profileImageUrl'] ?? '',
+          mediaUrl: mediaUrl,
+          timestamp: DateTime.now(),
+          expiryTime: expiryTime,
+          caption: caption,
+          viewers: [],
+          background: background,
+          mediaType: mediaType,
+          isHighlighted: false,
+          musicInfo: musicInfo,
+          mentions: mentions,
+          location: location,
+          filter: filter,
+          reactions: [],
+          allowSharing: allowSharing,
+          replies: [],
+          privacy: privacy,
+        );
 
-      await _firestore.collection('stories').add(story.toMap());
-    } catch (e) {
-      print('❌ Error adding story: $e');
-      _errorController.add("Couldn't create story. Please try again.");
-      await _errorHandler.handleFirebaseException(e, context);
-      rethrow;
-    }
+        await _firestore.collection('stories').add(story.toMap());
+        _markOperationDone(operationKey);
+      } catch (e) {
+        print('❌ Error adding story: $e');
+        if (!e.toString().contains('resource-exhausted')) {
+          _errorController.add("Couldn't create story. Please try again.");
+          await _errorHandler.handleFirebaseException(e, context);
+        }
+        rethrow;
+      }
+    });
   }
 
-  // Mark a story as viewed by the current user
+  // Mark a story as viewed by the current user (with rate limiting)
   Future<void> markStoryAsViewed(String storyId,
       {BuildContext? context}) async {
     if (currentUserId == null) return;
 
-    try {
-      DocumentReference storyRef =
-          _firestore.collection('stories').doc(storyId);
+    final operationKey = 'view_story_${storyId}_$currentUserId';
+    
+    if (_wasRecentlyDone(operationKey)) {
+      return; // Skip if already marked as viewed recently
+    }
 
-      return _firestore.runTransaction((transaction) async {
-        DocumentSnapshot storySnapshot = await transaction.get(storyRef);
+    return _queueRequest(() async {
+      try {
+        DocumentReference storyRef =
+            _firestore.collection('stories').doc(storyId);
+
+        // Use simple update instead of transaction to reduce overhead
+        DocumentSnapshot storySnapshot = await storyRef.get();
 
         if (!storySnapshot.exists) {
           throw Exception("Story does not exist!");
@@ -418,17 +495,98 @@ class StoryService {
         if (!viewers.contains(currentUserId)) {
           // Add current user to viewers list if not already there
           viewers.add(currentUserId!);
-          transaction.update(storyRef, {'viewers': viewers});
+          await storyRef.update({'viewers': viewers});
+          _markOperationDone(operationKey);
         }
-      });
-    } catch (e) {
-      print('❌ Error marking story as viewed: $e');
-      await _errorHandler.handleFirebaseException(e, context);
-    }
+      } catch (e) {
+        print('❌ Error marking story as viewed: $e');
+        if (!e.toString().contains('resource-exhausted')) {
+          await _errorHandler.handleFirebaseException(e, context);
+        }
+      }
+    });
   }
 
-  // React to a story with an emoji
+  // React to a story with an emoji (with comprehensive rate limiting)
   Future<void> reactToStory(String storyId, String emoji,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    // Create operation key for caching
+    final operationKey = 'reaction_${storyId}_${currentUserId}_$emoji';
+    
+    // Check if this exact operation was done recently
+    if (_wasRecentlyDone(operationKey)) {
+      print('🚫 Skipping duplicate reaction operation');
+      return;
+    }
+
+    // Queue the operation to prevent overwhelming Firestore
+    return _queueRequest(() async {
+      try {
+        DocumentReference storyRef =
+            _firestore.collection('stories').doc(storyId);
+
+        // Simple get instead of transaction
+        DocumentSnapshot storySnapshot = await storyRef.get();
+
+        if (!storySnapshot.exists) {
+          throw Exception("Story does not exist!");
+        }
+
+        final storyData = storySnapshot.data() as Map<String, dynamic>;
+        List<Map<String, dynamic>> reactions =
+            List<Map<String, dynamic>>.from(storyData['reactions'] ?? []);
+
+        // Check if the user has already reacted with this emoji
+        final existingReactionIndex = reactions.indexWhere((reaction) =>
+            reaction['userId'] == currentUserId && reaction['emoji'] == emoji);
+
+        if (existingReactionIndex != -1) {
+          // User already reacted with this emoji, remove it (toggle off)
+          reactions.removeAt(existingReactionIndex);
+        } else {
+          // Add new reaction
+          reactions.add({
+            'userId': currentUserId,
+            'emoji': emoji,
+            'timestamp': Timestamp.now(),
+            'username': await _getCurrentUsername(), // Add username for easier display
+          });
+        }
+
+        // Simple update with retry logic
+        int retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+          try {
+            await storyRef.update({'reactions': reactions});
+            _markOperationDone(operationKey);
+            break;
+          } catch (e) {
+            retryCount++;
+            if (e.toString().contains('resource-exhausted') && retryCount < maxRetries) {
+              // Exponential backoff for retries
+              await Future.delayed(Duration(milliseconds: 1000 * retryCount));
+              continue;
+            }
+            rethrow;
+          }
+        }
+      } catch (e) {
+        print('❌ Error reacting to story: $e');
+        // Don't show error to user if it's rate limiting
+        if (!e.toString().contains('resource-exhausted')) {
+          await _errorHandler.handleFirebaseException(e, context);
+        }
+        rethrow;
+      }
+    });
+  }
+
+  // Remove a specific reaction from a story
+  Future<void> removeReaction(String storyId, String emoji,
       {BuildContext? context}) async {
     if (currentUserId == null) return;
 
@@ -447,28 +605,66 @@ class StoryService {
         List<Map<String, dynamic>> reactions =
             List<Map<String, dynamic>>.from(storyData['reactions'] ?? []);
 
-        // Check if the user has already reacted with this emoji
-        final existingReactionIndex = reactions.indexWhere((reaction) =>
+        // Remove the specific reaction
+        reactions.removeWhere((reaction) =>
             reaction['userId'] == currentUserId && reaction['emoji'] == emoji);
-
-        if (existingReactionIndex != -1) {
-          // User already reacted with this emoji, remove it
-          reactions.removeAt(existingReactionIndex);
-        } else {
-          // Add new reaction
-          reactions.add({
-            'userId': currentUserId,
-            'emoji': emoji,
-            'timestamp': Timestamp.now(),
-          });
-        }
 
         transaction.update(storyRef, {'reactions': reactions});
       });
     } catch (e) {
-      print('❌ Error reacting to story: $e');
+      print('❌ Error removing reaction: $e');
       await _errorHandler.handleFirebaseException(e, context);
       rethrow;
+    }
+  }
+
+  // Remove all reactions from current user for a story
+  Future<void> removeAllUserReactions(String storyId,
+      {BuildContext? context}) async {
+    if (currentUserId == null) return;
+
+    try {
+      DocumentReference storyRef =
+          _firestore.collection('stories').doc(storyId);
+
+      return _firestore.runTransaction((transaction) async {
+        DocumentSnapshot storySnapshot = await transaction.get(storyRef);
+
+        if (!storySnapshot.exists) {
+          throw Exception("Story does not exist!");
+        }
+
+        final storyData = storySnapshot.data() as Map<String, dynamic>;
+        List<Map<String, dynamic>> reactions =
+            List<Map<String, dynamic>>.from(storyData['reactions'] ?? []);
+
+        // Remove all reactions from current user
+        reactions.removeWhere((reaction) => reaction['userId'] == currentUserId);
+
+        transaction.update(storyRef, {'reactions': reactions});
+      });
+    } catch (e) {
+      print('❌ Error removing all user reactions: $e');
+      await _errorHandler.handleFirebaseException(e, context);
+      rethrow;
+    }
+  }
+
+  // Get current user's username for reactions
+  Future<String> _getCurrentUsername() async {
+    if (currentUserId == null) return 'Unknown';
+    
+    try {
+      DocumentSnapshot userDoc =
+          await _firestore.collection('users').doc(currentUserId).get();
+      if (userDoc.exists) {
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+        return userData['username'] ?? 'Unknown';
+      }
+      return 'Unknown';
+    } catch (e) {
+      print('❌ Error getting username: $e');
+      return 'Unknown';
     }
   }
 

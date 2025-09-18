@@ -203,7 +203,7 @@ class ModernMessageBubble extends StatelessWidget {
                           Icon(
                             isRead ? Icons.done_all : Icons.done,
                             size: 14,
-                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                            color: isRead ? Colors.green : textColor.withOpacity(0.7),
                           ),
                         ],
                       ],
@@ -271,7 +271,7 @@ class ModernMessageBubble extends StatelessWidget {
                           Icon(
                             isRead ? Icons.done_all : Icons.done,
                             size: 14,
-                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                            color: isRead ? Colors.green : textColor.withOpacity(0.7),
                           ),
                         ],
                       ],
@@ -344,7 +344,7 @@ class ModernMessageBubble extends StatelessWidget {
                           Icon(
                             isRead ? Icons.done_all : Icons.done,
                             size: 14,
-                            color: isRead ? Colors.blue : textColor.withOpacity(0.7),
+                            color: isRead ? Colors.green : textColor.withOpacity(0.7),
                           ),
                         ],
                       ],
@@ -423,7 +423,7 @@ class ModernMessageBubble extends StatelessWidget {
                           isRead ? Icons.done_all : Icons.done,
                           size: 14,
                           color:
-                              isRead ? Colors.blue : textColor.withOpacity(0.7),
+                              isRead ? Colors.green : textColor.withOpacity(0.7),
                         ),
                       ],
                     ],

@@ -455,6 +455,17 @@ class _SettingsScreenState extends State<SettingsScreen>
                             );
                           },
                         ),
+                        ListTile(
+                          leading: Icon(Icons.notifications_active,
+                              color: iconColor),
+                          title: const Text('Test Notifications'),
+                          subtitle: const Text(
+                              'Test if your notifications are working properly'),
+                          trailing: Icon(Icons.bug_report, size: 16),
+                          onTap: () {
+                            Navigator.of(context).pushNamed('/notification_test');
+                          },
+                        ),
                       ]),
 
                       SizedBox(height: 16),

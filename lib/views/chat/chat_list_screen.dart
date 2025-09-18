@@ -266,9 +266,14 @@ class _ChatListScreenState extends State<ChatListScreen>
       for (int i = 0; i < uncachedUserIds.length; i += chunkSize) {
         final chunk = uncachedUserIds.skip(i).take(chunkSize).toList();
         
+        // Filter out empty strings to avoid Firestore query errors
+        final validChunk = chunk.where((id) => id.isNotEmpty).toList();
+        
+        if (validChunk.isEmpty) continue;
+        
         final querySnapshot = await FirebaseFirestore.instance
             .collection('users')
-            .where(FieldPath.documentId, whereIn: chunk)
+            .where(FieldPath.documentId, whereIn: validChunk)
             .get();
 
         for (final doc in querySnapshot.docs) {

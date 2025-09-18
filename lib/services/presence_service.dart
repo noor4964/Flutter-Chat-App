@@ -139,9 +139,13 @@ class PresenceService {
 
     if (userIds.isEmpty) return Stream.value([]);
 
+    // Filter out empty strings to avoid Firestore query errors
+    final validUserIds = userIds.where((id) => id.isNotEmpty).toList();
+    if (validUserIds.isEmpty) return Stream.value([]);
+
     return _firestore
         .collection('users')
-        .where(FieldPath.documentId, whereIn: userIds)
+        .where(FieldPath.documentId, whereIn: validUserIds)
         .where('isOnline', isEqualTo: true)
         .snapshots()
         .map((snapshot) {

@@ -6,6 +6,7 @@ import 'package:flutter_chat_app/models/message_reaction.dart';
 import '../services/firebase_config.dart';
 import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/services/chat_notification_service.dart';
+import 'package:flutter_chat_app/services/enhanced_notification_service.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
 
 class ChatService {
@@ -102,7 +103,7 @@ class ChatService {
     }
   }
 
-  // Helper method to send notification to chat recipients
+  // Helper method to send notification to chat recipients - Enhanced for WhatsApp-like experience
   Future<void> _sendNotificationToRecipients(
       String chatId, String senderId, String message) async {
     try {
@@ -118,6 +119,9 @@ class ChatService {
       // Get sender's username for the notification
       String senderName = await getUsername(senderId);
 
+      // Check if it's a group chat
+      bool isGroupChat = userIds.length > 2;
+
       // For each recipient (excluding sender)
       for (String userId in userIds) {
         if (userId != senderId) {
@@ -128,7 +132,23 @@ class ChatService {
 
           // Only send notification if user is not actively viewing the chat
           if (!isActive) {
-            // Send notification
+            // Use enhanced notification service for WhatsApp-like features
+            final enhancedNotificationService = EnhancedNotificationService();
+            await enhancedNotificationService.sendPushNotification(
+              body: message,
+              recipientId: userId,
+              chatId: chatId,
+              title: isGroupChat ? chatData['name'] ?? 'Group Chat' : senderName,
+              data: {
+                'senderId': senderId,
+                'senderName': senderName,
+                'messageType': 'text',
+                'isGroupChat': isGroupChat.toString(),
+                'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
+              },
+            );
+
+            // Fallback to original notification service for compatibility
             final notificationService = ChatNotificationService();
             await notificationService.sendMessageNotification(
                 recipientId: userId,
@@ -137,7 +157,7 @@ class ChatService {
                 message: message,
                 chatId: chatId);
 
-            print('Notification sent to $userId for message in chat $chatId');
+            print('Enhanced notification sent to $userId for message in chat $chatId');
           } else {
             print(
                 'User $userId is active in chat $chatId, no notification sent');
@@ -150,7 +170,65 @@ class ChatService {
     }
   }
 
-  // Send an image message
+  // Helper method to send notification for media messages (images, videos, files)
+  Future<void> _sendMediaNotificationToRecipients(
+      String chatId, String senderId, String mediaDescription, String mediaType) async {
+    try {
+      // Get chat document to find all recipients
+      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
+      final chatData = chatDoc.data();
+
+      if (chatData == null) return;
+
+      // Get all user IDs in the chat
+      final List<String> userIds = List<String>.from(chatData['userIds'] ?? []);
+
+      // Get sender's username for the notification
+      String senderName = await getUsername(senderId);
+
+      // Check if it's a group chat
+      bool isGroupChat = userIds.length > 2;
+
+      // For each recipient (excluding sender)
+      for (String userId in userIds) {
+        if (userId != senderId) {
+          // Check if recipient is currently active in this chat
+          final presenceService = PresenceService();
+          bool isActive =
+              await presenceService.isUserActiveInChat(userId, chatId);
+
+          // Only send notification if user is not actively viewing the chat
+          if (!isActive) {
+            // Use enhanced notification service for WhatsApp-like features
+            final enhancedNotificationService = EnhancedNotificationService();
+            await enhancedNotificationService.sendPushNotification(
+              body: mediaDescription,
+              recipientId: userId,
+              chatId: chatId,
+              title: isGroupChat ? chatData['name'] ?? 'Group Chat' : senderName,
+              data: {
+                'senderId': senderId,
+                'senderName': senderName,
+                'messageType': mediaType,
+                'isGroupChat': isGroupChat.toString(),
+                'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
+              },
+            );
+
+            print('Enhanced media notification sent to $userId for $mediaType in chat $chatId');
+          } else {
+            print(
+                'User $userId is active in chat $chatId, no media notification sent');
+          }
+        }
+      }
+    } catch (e) {
+      // Log but don't fail the message send process
+      print('Error sending media notification: $e');
+    }
+  }
+
+  // Send an image message - Enhanced with notifications
   Future<void> sendImageMessage(
       String chatId, String imageUrl, String senderId) async {
     if (_isWindowsWithoutFirebase) {
@@ -169,6 +247,7 @@ class ChatService {
         'senderId': senderId,
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'image',
+        'readBy': [senderId], // Initialize with sender as having read it
       });
 
       // Update chat metadata with indicator of image message
@@ -181,6 +260,9 @@ class ChatService {
 
       // Clear typing indicator when sending a message
       await setTypingStatus(chatId, senderId, false);
+
+      // Send enhanced notifications for image
+      _sendMediaNotificationToRecipients(chatId, senderId, '📷 Photo', 'image');
     } catch (e) {
       print('Error sending image message: $e');
       throw e;
@@ -396,22 +478,22 @@ class ChatService {
 
     try {
       print(
-          'Starting to mark messages as read in chat $chatId for user $userId');
+          '🔄 Starting to mark messages as read in chat $chatId for user $userId');
 
       // First mark the chat as read at the chat level
       await markChatAsRead(chatId, userId);
 
-      // Get unread messages sent by others (only those the current user hasn't read yet)
+      // Use a simpler approach - get all recent messages and filter in code
       final messagesQuery = await _firestore
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .where('senderId',
-              isNotEqualTo: userId) // Only mark messages from others
+          .orderBy('timestamp', descending: true)
+          .limit(50) // Get most recent 50 messages
           .get();
 
       print(
-          'Found ${messagesQuery.docs.length} messages to check for read status');
+          '📄 Found ${messagesQuery.docs.length} messages to process for read status');
 
       // Use a batch to update multiple messages efficiently
       final batch = _firestore.batch();
@@ -420,6 +502,14 @@ class ChatService {
 
       for (var doc in messagesQuery.docs) {
         Map<String, dynamic> data = doc.data();
+        String senderId = data['senderId'] ?? '';
+        
+        // Only process messages NOT sent by the current user
+        if (senderId == userId) {
+          print('⏭️ Skipping message ${doc.id} - sent by current user ($userId)');
+          continue;
+        }
+        
         // Initialize empty list if readBy doesn't exist
         List<dynamic> readBy = [];
         
@@ -427,32 +517,37 @@ class ChatService {
           readBy = List<dynamic>.from(data['readBy']);
         }
 
-        print('Checking message ${doc.id} with readBy: $readBy');
+        print('📋 Processing message ${doc.id}:');
+        print('   👤 Sender: $senderId');
+        print('   � Current User: $userId');
+        print('   📋 Current readBy: $readBy');
 
         // Only update if user hasn't read it yet
         if (!readBy.contains(userId)) {
-          print('User $userId not in readBy list, marking as read');
+          print('✅ Adding $userId to readBy list for message ${doc.id}');
           readBy.add(userId);
           batch.update(doc.reference, {
             'readBy': readBy,
-            'readTimestamp': now, // Add server timestamp when message is read
+            'readTimestamp': now,
           });
 
           updatedCount++;
-          print('Marking message ${doc.id} as read by $userId');
         } else {
-          print('Message ${doc.id} already read by $userId');
+          print('👁️ Message ${doc.id} already read by $userId');
         }
       }
 
       if (updatedCount > 0) {
         await batch.commit();
-        print('Successfully marked $updatedCount messages as read');
+        print('✅ Successfully marked $updatedCount messages as read');
+        
+        // Force a small delay to ensure Firestore updates propagate
+        await Future.delayed(const Duration(milliseconds: 500));
       } else {
-        print('No new messages to mark as read');
+        print('ℹ️ No new messages to mark as read');
       }
     } catch (e) {
-      print('Error marking messages as read: $e');
+      print('❌ Error marking messages as read: $e');
       print('Stack trace: ${StackTrace.current}');
     }
   }
@@ -475,6 +570,11 @@ class ChatService {
     // Combine both streams to ensure we get updates when either messages or read statuses change
     return messagesStream.map((snapshot) {
       print('Message stream updated with ${snapshot.docs.length} messages');
+      
+      // Auto-mark messages as read when stream updates (indicating user is viewing)
+      Future.delayed(const Duration(milliseconds: 100), () {
+        markMessagesAsRead(chatId, currentUserId);
+      });
 
       return snapshot.docs.map((doc) {
         try {

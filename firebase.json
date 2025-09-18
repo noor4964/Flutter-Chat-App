@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "source": "firebase_functions/functions"
+  },
   "emulators": {
     "dataconnect": {
       "dataDir": "dataconnect/.dataconnect/pgliteData"

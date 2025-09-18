@@ -104,13 +104,13 @@ service cloud.firestore {
       // Only the story creator can create stories
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       
-      // Anyone can update stories to mark them as viewed (to add themselves to viewers array)
+      // Anyone can update stories to mark them as viewed or add reactions
       allow update: if isAuthenticated() && (
         // Owner can update anything
         request.resource.data.userId == request.auth.uid ||
-        // Non-owners can only update the viewers array
+        // Non-owners can only update the viewers array or reactions array
         (resource.data.userId != request.auth.uid && 
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers']))
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers', 'reactions']))
       );
       
       // Only the owner can delete their stories
@@ -140,9 +140,22 @@ service cloud.firestore {
     }
 
     // ✅ Notifications Collection (Push Notifications)
-    match /notifications/{notificationId} {
-      allow read, delete: if isAuthenticated() && request.auth.uid == resource.data.receiverId;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.senderId;
+    match /notifications/{userId} {
+      allow read, delete: if isAuthenticated() && request.auth.uid == userId;
+      // Allow authenticated users to create user notification documents
+      allow create: if isAuthenticated();
+      
+      // User notifications subcollection
+      match /user_notifications/{notificationId} {
+        allow read, delete: if isAuthenticated() && request.auth.uid == userId;
+        // Allow any authenticated user to create notifications for others (client-side system)
+        allow create: if isAuthenticated();
+        // Allow sender to update notification status
+        allow update: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          request.auth.uid == resource.data.senderId
+        );
+      }
     }
 
     // ✅ Posts Collection (Social Media Feed)

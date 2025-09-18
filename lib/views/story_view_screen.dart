@@ -30,6 +30,7 @@ class _StoryViewScreenState extends State<StoryViewScreen>
   late int _currentIndex;
   late List<Story> _stories;
   bool _isLoading = false;
+  bool _isProcessingReaction = false; // Add rate limiting flag
   final StoryService _storyService = StoryService();
   String? _currentUserId;
   Timer? _timer;
@@ -114,9 +115,30 @@ class _StoryViewScreenState extends State<StoryViewScreen>
   }
 
   void _onTapDown(TapDownDetails details) {
-    // Determine which half of the screen was tapped
+    // Get screen dimensions
     final double screenWidth = MediaQuery.of(context).size.width;
+    final double screenHeight = MediaQuery.of(context).size.height;
+    
+    // Define the button area (bottom right corner where story actions are)
+    final double buttonAreaWidth = 100; // Width of button area
+    final double buttonAreaHeight = 200; // Height of button area from bottom
+    final double buttonAreaRight = screenWidth - 10; // 10px from right edge
+    final double buttonAreaBottom = screenHeight - MediaQuery.of(context).padding.bottom - 70;
+    
+    // Check if tap is in the button area
+    final bool isInButtonArea = details.globalPosition.dx > (buttonAreaRight - buttonAreaWidth) &&
+                               details.globalPosition.dy > (buttonAreaBottom - buttonAreaHeight);
+    
+    // If tap is in button area, don't process story navigation
+    if (isInButtonArea) {
+      print('🚫 Tap in button area - ignoring story navigation');
+      return;
+    }
+    
+    // Determine which half of the screen was tapped (excluding button area)
     final bool isLeftSide = details.globalPosition.dx < screenWidth / 2;
+
+    print('🎯 Story tap detected - Left: $isLeftSide, Position: ${details.globalPosition}');
 
     // Stop the animation temporarily
     _animationController.stop();
@@ -418,18 +440,42 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                   right: 10,
                   child: Column(
                     children: [
-                      // Only show reply and reaction options if not the current user's story
-                      if (story.userId != _currentUserId) ...[
-                        // Reaction button
-                        _buildStoryAction(
-                          icon: Icons.favorite_border,
-                          label: "React",
-                          onTap: () {
-                            _showReactionPicker(story);
-                          },
+                      // Debug info
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          'DEBUG: Story User: ${story.userId}\nCurrent User: $_currentUserId\nShould show React: ${story.userId != _currentUserId}',
+                          style: TextStyle(color: Colors.white, fontSize: 10),
                         ),
-                        const SizedBox(height: 16),
-
+                      ),
+                      
+                      // Show reaction button for ALL stories (temporarily for testing)
+                      _buildStoryAction(
+                        icon: Icons.favorite_border,
+                        label: "React",
+                        onTap: () {
+                          print('💗 React button tapped!');
+                          print('📱 Story ID: ${story.id}');
+                          print('👤 Current User: $_currentUserId');
+                          print('📊 Story Object: ${story.toString()}');
+                          try {
+                            _showReactionPicker(story);
+                          } catch (e) {
+                            print('❌ Error showing reaction picker: $e');
+                            // Show a simple snackbar if the picker fails
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to open reaction picker: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Only show reply option if not the current user's story
+                      if (story.userId != _currentUserId) ...[
                         // Reply button
                         _buildStoryAction(
                           icon: Icons.send_outlined,
@@ -511,30 +557,45 @@ class _StoryViewScreenState extends State<StoryViewScreen>
     required VoidCallback onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.5),
-              shape: BoxShape.circle,
+      onTapDown: (details) {
+        print('🎯 Story action TAP DOWN: $label');
+        // Execute immediately on tap down to beat parent gesture detector
+        onTap();
+      },
+      onTap: () {
+        print('🎯 Story action TAP: $label (backup)');
+        // Backup in case onTapDown doesn't work
+      },
+      // Prevent parent GestureDetector from receiving this tap
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        // Add container to ensure proper hit testing
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.all(4),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: Colors.white,
+                size: 24,
+              ),
             ),
-            child: Icon(
-              icon,
-              color: Colors.white,
-              size: 24,
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.9),
+                fontSize: 12,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontSize: 12,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -906,30 +967,24 @@ class _StoryViewScreenState extends State<StoryViewScreen>
     }
   }
 
-  // New method to show emoji reactions
+  // Enhanced method to show emoji reactions
   void _showReactionPicker(Story story) {
-    final List<String> commonEmojis = [
-      '❤️',
-      '😂',
-      '😮',
-      '😢',
-      '😡',
-      '👍',
-      '🔥',
-      '🎉'
-    ];
-
+    print('_showReactionPicker called for story: ${story.id}');
+    print('Current user ID: $_currentUserId');
+    print('Story reactions: ${story.reactions}');
+    
+    // Simple test version first
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
+        height: 300,
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
               // Handle for the bottom sheet
               Container(
@@ -943,99 +998,205 @@ class _StoryViewScreenState extends State<StoryViewScreen>
               ),
 
               Padding(
-                padding: const EdgeInsets.all(8.0),
+                padding: const EdgeInsets.all(16.0),
                 child: Text(
                   "React to Story",
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                    fontSize: 18,
                   ),
                 ),
               ),
 
-              // Emoji grid
-              GridView.builder(
-                shrinkWrap: true,
-                padding: const EdgeInsets.all(16),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  childAspectRatio: 1,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
+              // Simple emoji grid
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    childAspectRatio: 1,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                  ),
+                  itemCount: 8,
+                  itemBuilder: (context, index) {
+                    final emojis = ['❤️', '😂', '😮', '😢', '😡', '👍', '🔥', '🎉'];
+                    final emoji = emojis[index];
+                    
+                    return InkWell(
+                      onTap: () async {
+                        print('Emoji tapped: $emoji');
+                        Navigator.pop(context);
+                        await _handleReaction(story, emoji);
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[300]!, width: 1),
+                        ),
+                        child: Center(
+                          child: Text(
+                            emoji,
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                itemCount: commonEmojis.length,
-                itemBuilder: (context, index) {
-                  return InkWell(
-                    onTap: () async {
-                      Navigator.pop(context);
-
-                      // Show loading indicator with a key to dismiss it later
-                      final ScaffoldFeatureController loadingSnackBar =
-                          ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Sending reaction...'),
-                          duration: Duration(
-                              seconds:
-                                  30), // Longer duration that will be dismissed manually
-                        ),
-                      );
-
-                      try {
-                        // Send the reaction
-                        await _storyService.reactToStory(
-                          story.id,
-                          commonEmojis[index],
-                          context: context,
-                        );
-
-                        // Hide the loading snackbar
-                        loadingSnackBar.close();
-
-                        // Show confirmation
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content:
-                                  Text('Reaction sent: ${commonEmojis[index]}'),
-                              duration: const Duration(seconds: 1),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        // Hide the loading snackbar
-                        loadingSnackBar.close();
-
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Failed to send reaction: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).cardColor,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.withOpacity(0.3)),
-                      ),
-                      child: Center(
-                        child: Text(
-                          commonEmojis[index],
-                          style: const TextStyle(fontSize: 24),
-                        ),
-                      ),
-                    ),
-                  );
-                },
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  // Helper method to handle reaction with rate limiting
+  Future<void> _handleReaction(Story story, String emoji) async {
+    // Check if we're hitting rate limits
+    if (_isProcessingReaction) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait a moment before adding another reaction'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    _isProcessingReaction = true;
+
+    final ScaffoldFeatureController loadingSnackBar =
+        ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Sending reaction...'),
+        duration: Duration(seconds: 30),
+      ),
+    );
+
+    try {
+      await _storyService.reactToStory(
+        story.id,
+        emoji,
+        context: context,
+      );
+
+      loadingSnackBar.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reaction sent: $emoji'),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      loadingSnackBar.close();
+
+      if (mounted) {
+        String errorMessage = 'Failed to send reaction';
+        if (e.toString().contains('resource-exhausted')) {
+          errorMessage = 'Too many requests. Please wait a moment and try again.';
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      // Add delay before allowing next reaction
+      await Future.delayed(const Duration(milliseconds: 500));
+      _isProcessingReaction = false;
+    }
+  }
+
+  // Helper method to remove specific reaction
+  Future<void> _removeSpecificReaction(Story story, String emoji) async {
+    final ScaffoldFeatureController loadingSnackBar =
+        ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Removing reaction...'),
+        duration: Duration(seconds: 30),
+      ),
+    );
+
+    try {
+      await _storyService.removeReaction(
+        story.id,
+        emoji,
+        context: context,
+      );
+
+      loadingSnackBar.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reaction removed: $emoji'),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      loadingSnackBar.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove reaction: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Helper method to remove all user reactions
+  Future<void> _removeAllReactions(Story story) async {
+    final ScaffoldFeatureController loadingSnackBar =
+        ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Removing all reactions...'),
+        duration: Duration(seconds: 30),
+      ),
+    );
+
+    try {
+      await _storyService.removeAllUserReactions(
+        story.id,
+        context: context,
+      );
+
+      loadingSnackBar.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All reactions removed'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      loadingSnackBar.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove reactions: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   String _formatMentions(List<String> mentions) {
@@ -1048,46 +1209,212 @@ class _StoryViewScreenState extends State<StoryViewScreen>
     }
   }
 
-  // Display reactions on a story
+  // Enhanced display reactions on a story with reaction details
   Widget _buildReactionsDisplay(Story story) {
     // If no reactions, return empty container
     if (story.reactions.isEmpty) {
       return const SizedBox.shrink();
     }
 
-    // Group reactions by emoji
+    // Group reactions by emoji manually
     Map<String, int> reactionCounts = {};
     for (var reaction in story.reactions) {
       String emoji = reaction['emoji'] as String;
       reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
     }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(20),
+    return GestureDetector(
+      onTap: () => _showReactionDetails(story),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.3),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ...reactionCounts.entries.take(3).map(
+              (entry) => Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      entry.key,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    if (entry.value > 1)
+                      Text(
+                        entry.value.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (reactionCounts.length > 3)
+              Text(
+                "+${reactionCounts.length - 3}",
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            const SizedBox(width: 4),
+            Text(
+              story.reactions.length.toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ...reactionCounts.entries.take(3).map(
-                (entry) => Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: Text(
-                    "${entry.key}${entry.value > 1 ? entry.value : ''}",
-                    style: const TextStyle(fontSize: 14),
+    );
+  }
+
+  // Show detailed reaction information
+  void _showReactionDetails(Story story) {
+    // Group reactions by emoji manually
+    Map<String, List<String>> reactionsByEmoji = {};
+    for (var reaction in story.reactions) {
+      String emoji = reaction['emoji'] as String;
+      String username = reaction['username'] ?? 'Unknown';
+      if (!reactionsByEmoji.containsKey(emoji)) {
+        reactionsByEmoji[emoji] = [];
+      }
+      reactionsByEmoji[emoji]!.add(username);
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Handle for the bottom sheet
+              Container(
+                height: 4,
+                width: 40,
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  "Story Reactions",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
                   ),
                 ),
               ),
-          if (reactionCounts.length > 3)
-            Text(
-              "+${reactionCounts.length - 3}",
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.8),
-                fontSize: 12,
+
+              Expanded(
+                child: ListView.builder(
+                  itemCount: reactionsByEmoji.length,
+                  itemBuilder: (context, index) {
+                    final emoji = reactionsByEmoji.keys.elementAt(index);
+                    final users = reactionsByEmoji[emoji]!;
+                    final count = users.length;
+
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                      ),
+                      title: Text(
+                        '$count ${count == 1 ? 'reaction' : 'reactions'}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        users.take(3).join(', ') + 
+                        (users.length > 3 ? ' and ${users.length - 3} others' : ''),
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 14,
+                        ),
+                      ),
+                      onTap: () {
+                        // Show all users for this reaction
+                        _showUsersForReaction(emoji, users);
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Show all users who reacted with a specific emoji
+  void _showUsersForReaction(String emoji, List<String> users) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 8),
+            Text('Reactions', style: const TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Container(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: users.length,
+            itemBuilder: (context, index) {
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Theme.of(context).primaryColor,
+                  child: Text(
+                    users[index][0].toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                title: Text(users[index]),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );

@@ -91,6 +91,51 @@ class Story {
         reaction['userId'] == userId && reaction['emoji'] == emoji);
   }
 
+  // Get all reactions for a specific user
+  List<String> getUserReactions(String userId) {
+    return reactions
+        .where((reaction) => reaction['userId'] == userId)
+        .map((reaction) => reaction['emoji'] as String)
+        .toList();
+  }
+
+  // Get all unique emojis used in reactions
+  List<String> get uniqueReactionEmojis {
+    Set<String> emojis = {};
+    for (var reaction in reactions) {
+      emojis.add(reaction['emoji'] as String);
+    }
+    return emojis.toList();
+  }
+
+  // Get reaction counts grouped by emoji
+  Map<String, int> get reactionCounts {
+    Map<String, int> counts = {};
+    for (var reaction in reactions) {
+      String emoji = reaction['emoji'] as String;
+      counts[emoji] = (counts[emoji] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  // Get users who reacted with a specific emoji
+  List<String> getUsersForReaction(String emoji) {
+    return reactions
+        .where((reaction) => reaction['emoji'] == emoji)
+        .map((reaction) => reaction['userId'] as String)
+        .toList();
+  }
+
+  // Get total reaction count
+  int get totalReactionCount {
+    return reactions.length;
+  }
+
+  // Check if current user has any reactions
+  bool hasUserReactedAtAll(String userId) {
+    return reactions.any((reaction) => reaction['userId'] == userId);
+  }
+
   // Get all user replies
   List<Map<String, dynamic>> get userReplies {
     return List.from(replies);

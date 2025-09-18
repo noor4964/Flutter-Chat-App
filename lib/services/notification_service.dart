@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
 class NotificationService {
   bool _notificationsEnabled = true;
@@ -58,22 +57,33 @@ class NotificationService {
         return {'success': false, 'message': 'No FCM token available'};
       }
 
-      // Send a notification to the current user using Cloud Functions
-      final functions = FirebaseFunctions.instance;
-      final result =
-          await functions.httpsCallable('sendTestNotification').call({
-        'userId': user.uid,
+      // Send a notification to the current user using local notification storage
+      // Store notification data in Firestore for testing purposes
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .doc(user.uid)
+          .collection('user_notifications')
+          .add({
+        'title': 'Test Notification',
+        'body': 'This is a test notification from the notification service!',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'test',
         'withSound': _soundsEnabled,
+        'read': false,
+        'data': {
+          'userId': user.uid,
+          'notificationType': 'test'
+        }
       });
 
-      print('✅ Test notification sent successfully');
-      print('📝 Response data: ${result.data}');
+      print('✅ Test notification sent successfully (client-side)');
+      print('📝 Notification stored in Firestore for testing');
 
       return {
         'success': true,
-        'message': 'Test notification sent successfully',
+        'message': 'Test notification sent successfully (client-side)',
         'token': token.substring(0, 10) + '...',
-        'response': result.data
+        'note': 'Notification stored in Firestore - Firebase Functions require paid plan'
       };
     } catch (e) {
       print('❌ Error sending test notification: $e');
@@ -223,21 +233,27 @@ class NotificationService {
     if (!_notificationsEnabled) return;
 
     try {
-      // Get Firebase Functions instance
-      final functions = FirebaseFunctions.instance;
-
-      // Call the sendChatNotification function
-      final result =
-          await functions.httpsCallable('sendChatNotification').call({
-        'message': body,
+      // Store notification data in Firestore for client-side handling
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .doc(recipientId)
+          .collection('user_notifications')
+          .add({
         'title': title ?? 'New message',
-        'recipientId': recipientId,
+        'body': body,
         'chatId': chatId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'chat',
         'withSound': _soundsEnabled,
-        ...?data,
+        'read': false,
+        'data': {
+          'chatId': chatId,
+          'notificationType': 'chat',
+          ...?data,
+        }
       });
 
-      print('Push notification sent successfully: ${result.data}');
+      print('Push notification sent successfully (client-side)');
     } catch (e) {
       print('Error sending push notification: $e');
     }

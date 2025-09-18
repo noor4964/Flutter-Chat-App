@@ -33,7 +33,7 @@ class ChatScreen extends StatefulWidget {
   _ChatScreenState createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _messageController = TextEditingController();
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
@@ -48,9 +48,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   String _replyingTo = '';
   bool _isEmojiPickerOpen = false; // State variable for emoji picker
 
-  // Ajax-type system variables
-  bool _isConnected = true; // Connection status for real-time feedback
-  Timer? _connectionCheckTimer; // Periodic connection checking
+  // WhatsApp-style real-time system variables
+  bool _isConnected = true; // Connection status for subtle feedback only
 
   // For animations
   late AnimationController _sendButtonAnimationController;
@@ -69,6 +68,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    
+    // Add app lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
+    
     _loadChatPersonDetails();
     _cacheUsernames();
 
@@ -95,12 +98,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Listen to text changes to animate send button
     _messageController.addListener(_onMessageTextChanged);
 
-    // Initialize Ajax-type connection monitoring
-    _startConnectionMonitoring();
-
     // Add keyboard listener to handle consistent scrolling
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupKeyboardListener();
+      // Mark messages as read again after the first frame to ensure UI updates
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _markMessagesAsRead();
+      });
     });
   }
 
@@ -120,6 +124,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    // Remove app lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    
     // Clear typing status on dispose
     if (user != null) {
       _chatService.setTypingStatus(widget.chatId, user!.uid, false);
@@ -135,10 +142,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Cancel message read timer
     _messageReadTimer?.cancel();
 
-    // Cancel connection monitoring timer
-    _connectionCheckTimer?.cancel();
-
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // Mark messages as read when app becomes active (user returns to chat)
+    if (state == AppLifecycleState.resumed) {
+      print('🔄 App resumed, marking messages as read');
+      _markMessagesAsRead();
+    }
   }
 
   // Update user presence when entering or leaving a chat
@@ -244,17 +259,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Create a new timer that periodically marks messages as read
     _messageReadTimer =
-        Timer.periodic(const Duration(seconds: 5), (timer) async {
+        Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (user != null && mounted) {
-        // Mark messages as read
+        // Mark messages as read more frequently
         await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
 
         // Also mark the chat as read at the chat level
         await _chatService.markChatAsRead(widget.chatId, user!.uid);
 
-        print('Automatically marked messages as read');
+        print('🔄 Automatically marked messages as read (timer: ${DateTime.now()})');
       }
     });
+  }
+
+  // Manual test function to mark messages as read
+  void _manualMarkAsRead() async {
+    if (user != null) {
+      print('🧪 MANUAL TEST: Marking messages as read');
+      await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
+      print('🧪 MANUAL TEST: Completed marking messages as read');
+    }
   }
 
   void _showChatPersonDetails() {
@@ -466,6 +490,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ),
         actions: [
+          // Debug button to manually test read status
+          IconButton(
+            icon: const Icon(Icons.check_circle),
+            color: theme.brightness == Brightness.dark ? null : Colors.white,
+            tooltip: 'Mark as Read (Debug)',
+            onPressed: _manualMarkAsRead,
+          ),
           // Connection status indicator for Ajax-type system
           _buildConnectionIndicator(theme),
           IconButton(
@@ -666,10 +697,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               return _buildEmptyChat();
                             }
 
-                            // Add pull-to-refresh for Ajax-type experience
-                            return RefreshIndicator(
-                              onRefresh: _refreshChatData,
-                              child: ListView.builder(
+                            // Add smooth real-time updates without refresh indicator
+                            return ListView.builder(
                                 controller: _scrollController,
                                 reverse:
                                     true, // Reverse the order of the messages
@@ -858,8 +887,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                   ],
                                 );
                               },
-                            ),
-                          );
+                            );
                         }
 
                         return _buildEmptyChat();
@@ -1493,73 +1521,77 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Auto-refresh functionality for real-time experience
+  // Minimal data sync for when absolutely necessary (like after reconnection)
   Future<void> _refreshChatData() async {
     try {
-      // Refresh chat person details
-      await _loadChatPersonDetails();
-      
-      // Refresh usernames cache
-      await _cacheUsernames();
-      
+      // Only refresh critical data if needed - Firestore listeners handle most updates
+      if (!_isConnected) {
+        await _checkConnectionAndRefresh();
+      }
     } catch (e) {
-      _showQuickFeedback('Failed to refresh', Colors.orange);
+      // Silent failure - let Firestore listeners handle the updates
     }
   }
 
-  // Build connection status indicator for Ajax-type system
+  // Build subtle connection status indicator like WhatsApp
   Widget _buildConnectionIndicator(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: _isConnected 
-        ? Icon(
-            Icons.wifi,
-            size: 16,
-            color: theme.brightness == Brightness.dark ? Colors.green : Colors.white,
-          )
-        : GestureDetector(
-            onTap: _checkConnectionAndRefresh,
-            child: Icon(
-              Icons.wifi_off,
-              size: 16,
-              color: theme.brightness == Brightness.dark ? Colors.red : Colors.orange,
+        ? const SizedBox.shrink() // Hidden when connected, like WhatsApp
+        : Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.8),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.wifi_off,
+                  size: 12,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Connecting...',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
           ),
     );
   }
 
-  // Check connection status and refresh if needed
+  // Check connection status silently like WhatsApp
   Future<void> _checkConnectionAndRefresh() async {
     try {
-      // Simple connectivity test
+      // Simple connectivity test without forcing refresh
       await FirebaseFirestore.instance
           .collection('chats')
           .doc(widget.chatId)
           .get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 3));
       
       if (!_isConnected) {
         setState(() {
           _isConnected = true;
         });
-        _showQuickFeedback('Connection restored!', Colors.green);
+        // No intrusive feedback - just silently reconnect
       }
-      
-      // Auto-refresh data
-      await _refreshChatData();
     } catch (e) {
-      setState(() {
-        _isConnected = false;
-      });
-      _showQuickFeedback('No internet connection', Colors.red);
+      if (_isConnected) {
+        setState(() {
+          _isConnected = false;
+        });
+        // Only show subtle feedback when connection is lost
+      }
     }
-  }
-
-  // Initialize connection monitoring
-  void _startConnectionMonitoring() {
-    _connectionCheckTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
-      _checkConnectionAndRefresh();
-    });
   }
 
   // Start an audio call

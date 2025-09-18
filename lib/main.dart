@@ -5,6 +5,7 @@ import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
 import 'package:flutter_chat_app/services/notification_service.dart';
+import 'package:flutter_chat_app/services/enhanced_notification_service.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
@@ -17,6 +18,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
+import 'package:flutter_chat_app/screens/notification_test_screen.dart';
 
 import 'services/story_service.dart';
 
@@ -39,7 +41,11 @@ void main() async {
       // Initialize CallKit plugin for handling calls only on iOS/Android
       await _initCallKit();
 
-      // Initialize the notification service
+      // Initialize the enhanced notification service
+      final enhancedNotificationService = EnhancedNotificationService();
+      await enhancedNotificationService.initialize();
+      
+      // Initialize the basic notification service as backup
       final notificationService = NotificationService();
       await notificationService.initialize();
     } else {
@@ -131,6 +137,7 @@ class MyApp extends StatelessWidget {
           '/chat': (context) => const MessengerHomeScreen(isDesktop: false),
           '/requests': (context) => UserListScreen(),
           '/home': (context) => const HomeScreen(),
+          '/notification_test': (context) => const NotificationTestScreen(),
         },
         builder: (context, child) {
           // Enable error dialogs after app is built
