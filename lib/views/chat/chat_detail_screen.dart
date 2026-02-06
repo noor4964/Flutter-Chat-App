@@ -15,19 +15,22 @@ import 'package:transparent_image/transparent_image.dart';
 class ChatDetailScreen extends StatefulWidget {
   final String chatId;
   final String chatName;
+  final String? profileImageUrl;
+  final bool isOnline;
 
   const ChatDetailScreen({
     Key? key,
     required this.chatId,
     required this.chatName,
+    this.profileImageUrl,
+    this.isOnline = false,
   }) : super(key: key);
 
   @override
   State<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
 
-class _ChatDetailScreenState extends State<ChatDetailScreen>
-    with AutomaticKeepAliveClientMixin {
+class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ChatService _chatService = ChatService();
   final StorageService _storageService = StorageService();
@@ -62,11 +65,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
   StreamSubscription<DocumentSnapshot>? _typingSubscription;
 
   @override
-  bool get wantKeepAlive => true; // Keep state alive when navigating
-
-  @override
   void initState() {
     super.initState();
+    print('=== ChatDetailScreen InitState ===');
+    print('Chat ID: ${widget.chatId}');
+    print('Chat Name: ${widget.chatName}');
+    print('Profile URL: ${widget.profileImageUrl}');
+    print('Is Online: ${widget.isOnline}');
+    print('==================================');
+
     // Load cached messages first for immediate display
     _loadCachedMessages();
 
@@ -78,6 +85,24 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
 
     // Setup typing notification
     _messageController.addListener(_onTypingChanged);
+  }
+
+  @override
+  void didUpdateWidget(ChatDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    print('=== ChatDetailScreen DidUpdateWidget ===');
+    print('Old Chat Name: ${oldWidget.chatName}');
+    print('New Chat Name: ${widget.chatName}');
+    print('Old Profile URL: ${oldWidget.profileImageUrl}');
+    print('New Profile URL: ${widget.profileImageUrl}');
+    print(
+        'Profile Changed: ${oldWidget.profileImageUrl != widget.profileImageUrl}');
+    print('========================================');
+
+    // If the chat has changed, we might need to reload messages
+    if (oldWidget.chatId != widget.chatId) {
+      _loadCachedMessages();
+    }
   }
 
   void _scrollListener() {
@@ -597,12 +622,63 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
-
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.chatName),
-        centerTitle: true,
+        title: Container(
+          constraints: const BoxConstraints(maxWidth: double.infinity),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Profile Image
+              CircleAvatar(
+                radius: 18,
+                backgroundImage: widget.profileImageUrl != null &&
+                        widget.profileImageUrl!.isNotEmpty
+                    ? NetworkImage(widget.profileImageUrl!)
+                    : null,
+                child: widget.profileImageUrl == null ||
+                        widget.profileImageUrl!.isEmpty
+                    ? Text(
+                        widget.chatName.isNotEmpty
+                            ? widget.chatName[0].toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              // Name and Status
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.chatName,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    Text(
+                      'Tap to view info',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        titleSpacing: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),
@@ -612,7 +688,28 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
                 context: context,
                 builder: (context) => AlertDialog(
                   title: Text('Chat with ${widget.chatName}'),
-                  content: const Text('Chat information will appear here'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (widget.profileImageUrl != null &&
+                          widget.profileImageUrl!.isNotEmpty) ...[
+                        Center(
+                          child: CircleAvatar(
+                            radius: 40,
+                            backgroundImage:
+                                NetworkImage(widget.profileImageUrl!),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      Text('Name: ${widget.chatName}'),
+                      const SizedBox(height: 8),
+                      Text('Status: ${widget.isOnline ? "Online" : "Offline"}'),
+                      const SizedBox(height: 8),
+                      Text('Chat ID: ${widget.chatId}'),
+                    ],
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),

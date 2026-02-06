@@ -218,23 +218,26 @@ class _StoryViewScreenState extends State<StoryViewScreen>
                 // Progress indicator at the top
                 Positioned(
                   top: MediaQuery.of(context).padding.top + 8,
-                  left: 10,
-                  right: 10,
+                  left: 12,
+                  right: 12,
                   child: Row(
                     children: List.generate(
                       _stories.length,
                       (i) => Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 2),
-                          child: LinearProgressIndicator(
-                            value: i < _currentIndex
-                                ? 1.0
-                                : i == _currentIndex
-                                    ? _animationController.value
-                                    : 0.0,
-                            backgroundColor: Colors.white.withOpacity(0.4),
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: LinearProgressIndicator(
+                              value: i < _currentIndex
+                                  ? 1.0
+                                  : i == _currentIndex
+                                      ? _animationController.value
+                                      : 0.0,
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                              minHeight: 3,
+                            ),
                           ),
                         ),
                       ),
@@ -559,6 +562,7 @@ class _StoryViewScreenState extends State<StoryViewScreen>
     return GestureDetector(
       onTapDown: (details) {
         print('🎯 Story action TAP DOWN: $label');
+        HapticFeedback.lightImpact();
         // Execute immediately on tap down to beat parent gesture detector
         onTap();
       },
@@ -575,23 +579,28 @@ class _StoryViewScreenState extends State<StoryViewScreen>
         child: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.5),
+                color: Colors.black.withOpacity(0.4),
                 shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.2),
+                  width: 1,
+                ),
               ),
               child: Icon(
                 icon,
                 color: Colors.white,
-                size: 24,
+                size: 22,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               label,
               style: TextStyle(
                 color: Colors.white.withOpacity(0.9),
-                fontSize: 12,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],

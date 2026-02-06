@@ -12,11 +12,16 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
-import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
+import 'package:flutter_chat_app/services/calls/enhanced_call_service.dart';
+import 'package:flutter_chat_app/views/calls/enhanced_audio_call_screen.dart';
 import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
 import 'dart:async';
 import '../../../utils/user_friendly_error_handler.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:geolocator/geolocator.dart';
 
 enum MessageStatus {
   sending,
@@ -26,8 +31,19 @@ enum MessageStatus {
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
+  final bool hideHeader;
+  final String? chatPersonName;
+  final String? chatPersonAvatarUrl;
+  final bool? chatPersonIsOnline;
 
-  const ChatScreen({super.key, required this.chatId});
+  const ChatScreen({
+    super.key, 
+    required this.chatId, 
+    this.hideHeader = false,
+    this.chatPersonName,
+    this.chatPersonAvatarUrl,
+    this.chatPersonIsOnline,
+  });
 
   @override
   _ChatScreenState createState() => _ChatScreenState();
@@ -51,17 +67,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   // WhatsApp-style real-time system variables
   bool _isConnected = true; // Connection status for subtle feedback only
 
+  // Cached chat person ID — used for typing, online status, and calls
+  String? _chatPersonId;
+
+  // Stream subscription for online status (real-time updates)
+  StreamSubscription<DocumentSnapshot>? _onlineStatusSubscription;
+
   // For animations
   late AnimationController _sendButtonAnimationController;
-  late Animation<double> _sendButtonAnimation;
 
   // Group messages by date
   Map<String, List<Message>> _groupedMessages = {};
 
-  // Timer for periodically marking messages as read
-  Timer? _messageReadTimer;
+  // Cached message stream — created once in initState, never recreated
+  Stream<List<Message>>? _messagesStream;
 
-  // Keyboard state tracking for consistent scrolling
+  // Memoization fields for _groupMessagesByDate
+  int _lastGroupedMessageCount = -1;
+  String? _lastGroupedFirstMessageId;
+
+  // Debouncer for mark-as-read (replaces aggressive 1-second timer)
+  Timer? _markAsReadDebouncer;
+
+  // Track whether usernames have been cached
+  bool _usernamesCached = false;
+
+  // Keyboard state tracking for consistent scrolling (mobile only)
   double _lastKeyboardHeight = 0.0;
   bool _isKeyboardAnimating = false;
 
@@ -72,14 +103,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     // Add app lifecycle observer
     WidgetsBinding.instance.addObserver(this);
     
-    _loadChatPersonDetails();
-    _cacheUsernames();
+    // Use passed parameters if available, otherwise load from Firebase
+    if (widget.chatPersonName != null) {
+      _chatPersonName = widget.chatPersonName;
+      _chatPersonAvatarUrl = widget.chatPersonAvatarUrl;
+      _chatPersonIsOnline = widget.chatPersonIsOnline ?? false;
+    } else {
+      _loadChatPersonDetails();
+    }
+    
+    // Cache usernames once (not on every build)
+    _cacheUsernamesOnce();
 
-    // Mark messages as read when the chat is opened
-    _markMessagesAsRead();
+    // Create message stream ONCE — reused across rebuilds
+    if (user != null) {
+      _messagesStream = _chatService.getMessages(widget.chatId, user!.uid);
+    }
 
-    // Set up a timer to periodically mark messages as read
-    _setupMessageReadTimer();
+    // Debounced mark-as-read (replaces aggressive 1-second timer)
+    _debouncedMarkAsRead();
 
     // Update presence to show that user is in this chat
     _updatePresence(true);
@@ -90,22 +132,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       duration: const Duration(milliseconds: 300),
     );
 
-    _sendButtonAnimation = CurvedAnimation(
-      parent: _sendButtonAnimationController,
-      curve: Curves.easeInOut,
-    );
-
     // Listen to text changes to animate send button
     _messageController.addListener(_onMessageTextChanged);
 
-    // Add keyboard listener to handle consistent scrolling
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _setupKeyboardListener();
-      // Mark messages as read again after the first frame to ensure UI updates
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _markMessagesAsRead();
+    // Set up keyboard listener after first frame (mobile only)
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _setupKeyboardListener();
       });
-    });
+    }
   }
 
   void _onMessageTextChanged() {
@@ -119,6 +154,57 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     // Update typing indicator in Firestore
     if (user != null) {
       _chatService.setTypingStatus(widget.chatId, user!.uid, hasText);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // If chatId changed (e.g., web layout reused this widget), reinitialize everything
+    if (widget.chatId != oldWidget.chatId) {
+      // Cancel old subscriptions
+      _onlineStatusSubscription?.cancel();
+      _onlineStatusSubscription = null;
+      _markAsReadDebouncer?.cancel();
+      _markAsReadDebouncer = null;
+
+      // Clear typing status for old chat
+      if (user != null) {
+        _chatService.setTypingStatus(oldWidget.chatId, user!.uid, false);
+      }
+
+      // Reset cached state
+      _usernamesCached = false;
+      _usernamesCache = {};
+      _chatPersonId = null;
+      _lastGroupedMessageCount = -1;
+      _lastGroupedFirstMessageId = null;
+      _groupedMessages.clear();
+      _isTyping = false;
+      _replyingTo = '';
+      _messageController.clear();
+
+      // Update person info from new widget params
+      if (widget.chatPersonName != null) {
+        _chatPersonName = widget.chatPersonName;
+        _chatPersonAvatarUrl = widget.chatPersonAvatarUrl;
+        _chatPersonIsOnline = widget.chatPersonIsOnline ?? false;
+      } else {
+        _loadChatPersonDetails();
+      }
+
+      // Recreate message stream for new chat
+      if (user != null) {
+        _messagesStream = _chatService.getMessages(widget.chatId, user!.uid);
+      }
+
+      // Reinitialize
+      _cacheUsernamesOnce();
+      _debouncedMarkAsRead();
+      _updatePresence(true);
+
+      setState(() {});
     }
   }
 
@@ -139,8 +225,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     _scrollController.dispose();
     _sendButtonAnimationController.dispose();
 
-    // Cancel message read timer
-    _messageReadTimer?.cancel();
+    // Cancel mark-as-read debouncer
+    _markAsReadDebouncer?.cancel();
+
+    // Cancel online status listener
+    _onlineStatusSubscription?.cancel();
 
     super.dispose();
   }
@@ -151,8 +240,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     
     // Mark messages as read when app becomes active (user returns to chat)
     if (state == AppLifecycleState.resumed) {
-      print('🔄 App resumed, marking messages as read');
-      _markMessagesAsRead();
+      _debouncedMarkAsRead();
     }
   }
 
@@ -192,23 +280,37 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         }
 
         if (chatPersonId.isNotEmpty) {
+          // Store for reuse in calls
+          _chatPersonId = chatPersonId;
+
           DocumentSnapshot userDoc = await FirebaseFirestore.instance
               .collection('users')
               .doc(chatPersonId)
               .get();
           if (userDoc.exists && mounted) {
             final userData = userDoc.data() as Map<String, dynamic>?;
+            
+            // Only update values we don't have from passed parameters
             setState(() {
-              _chatPersonName = userData?['username'];
-              _chatPersonAvatarUrl =
-                  userData != null && userData.containsKey('profileImageUrl')
-                      ? userData['profileImageUrl']
-                      : null;
-              _chatPersonIsOnline = userData?['isOnline'] ?? false;
+              if (widget.chatPersonName == null) {
+                _chatPersonName = userData?['username'];
+              }
+              if (widget.chatPersonAvatarUrl == null) {
+                _chatPersonAvatarUrl =
+                    userData != null && userData.containsKey('profileImageUrl')
+                        ? userData['profileImageUrl']
+                        : null;
+              }
+              if (widget.chatPersonIsOnline == null) {
+                _chatPersonIsOnline = userData?['isOnline'] ?? false;
+              }
             });
 
             // Start listening to typing status
             _listenToTypingStatus(chatPersonId);
+
+            // Start real-time online status listener
+            _listenToOnlineStatus(chatPersonId);
           }
         }
       }
@@ -229,8 +331,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     });
   }
 
-  Future<void> _cacheUsernames() async {
-    if (user != null) {
+  /// Cache usernames exactly once (not on every build).
+  /// Also extracts and stores _chatPersonId, starts typing + online status listeners.
+  Future<void> _cacheUsernamesOnce() async {
+    if (_usernamesCached || user == null) return;
+    _usernamesCached = true;
+    try {
       DocumentSnapshot chatDoc = await FirebaseFirestore.instance
           .collection('chats')
           .doc(widget.chatId)
@@ -241,43 +347,64 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           if (userId != user!.uid) {
             String username = await _chatService.getUsername(userId);
             _usernamesCache[userId] = username;
+
+            // Store the chat person ID for reuse (typing, online status, calls)
+            if (_chatPersonId == null) {
+              _chatPersonId = userId;
+
+              // Start typing status listener (critical for web where _loadChatPersonDetails is skipped)
+              _listenToTypingStatus(userId);
+
+              // Start real-time online status listener
+              _listenToOnlineStatus(userId);
+            }
           }
         }
       }
+    } catch (e) {
+      _usernamesCached = false; // Allow retry on error
     }
   }
 
-  Future<void> _markMessagesAsRead() async {
-    if (user != null) {
-      await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
-    }
-  }
-
-  void _setupMessageReadTimer() {
-    // Cancel any existing timer
-    _messageReadTimer?.cancel();
-
-    // Create a new timer that periodically marks messages as read
-    _messageReadTimer =
-        Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (user != null && mounted) {
-        // Mark messages as read more frequently
-        await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
-
-        // Also mark the chat as read at the chat level
-        await _chatService.markChatAsRead(widget.chatId, user!.uid);
-
-        print('🔄 Automatically marked messages as read (timer: ${DateTime.now()})');
+  /// Listen to the chat person's online/offline status in real-time
+  void _listenToOnlineStatus(String chatPersonId) {
+    _onlineStatusSubscription?.cancel();
+    _onlineStatusSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(chatPersonId)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted && snapshot.exists) {
+        final data = snapshot.data() as Map<String, dynamic>?;
+        final isOnline = data?['isOnline'] ?? false;
+        if (isOnline != _chatPersonIsOnline) {
+          setState(() {
+            _chatPersonIsOnline = isOnline;
+          });
+        }
+        // Also update avatar/name if they changed (and we don't have them)
+        if (_chatPersonAvatarUrl == null && data?.containsKey('profileImageUrl') == true) {
+          setState(() {
+            _chatPersonAvatarUrl = data!['profileImageUrl'];
+          });
+        }
       }
     });
   }
 
-  // Manual test function to mark messages as read
-  void _manualMarkAsRead() async {
-    if (user != null) {
-      print('🧪 MANUAL TEST: Marking messages as read');
+  /// Debounced mark-as-read — waits 1.5s of inactivity before firing.
+  /// Replaces the aggressive 1-second Timer.periodic that caused 2+ Firestore writes/sec.
+  void _debouncedMarkAsRead() {
+    _markAsReadDebouncer?.cancel();
+    _markAsReadDebouncer = Timer(const Duration(milliseconds: 1500), () {
+      _doMarkAsRead();
+    });
+  }
+
+  /// Actually perform the mark-as-read write (called by debouncer only)
+  Future<void> _doMarkAsRead() async {
+    if (user != null && mounted) {
       await _chatService.markMessagesAsRead(widget.chatId, user!.uid);
-      print('🧪 MANUAL TEST: Completed marking messages as read');
     }
   }
 
@@ -295,7 +422,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     );
   }
 
+  /// Memoized grouping — skips expensive clear+rebuild when messages haven't changed
   void _groupMessagesByDate(List<Message> messages) {
+    // Quick identity check: if count and first message ID match, skip re-grouping
+    final firstId = messages.isNotEmpty ? messages.first.id : null;
+    if (messages.length == _lastGroupedMessageCount &&
+        firstId == _lastGroupedFirstMessageId &&
+        _groupedMessages.isNotEmpty) {
+      return; // No change — reuse existing grouping
+    }
+    _lastGroupedMessageCount = messages.length;
+    _lastGroupedFirstMessageId = firstId;
+
     _groupedMessages.clear();
 
     for (var message in messages) {
@@ -371,19 +509,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     final colorScheme = theme.colorScheme;
     final isTabletOrDesktop = MediaQuery.of(context).size.width > 600;
     
-    // Track keyboard height changes for consistent scrolling
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    // Check if we're in web layout mode (large screen)
+    bool isWebLayout = PlatformHelper.isWeb && MediaQuery.of(context).size.width >= 1200;
+    bool shouldHideHeader = widget.hideHeader || isWebLayout;
     
-    // Handle keyboard appearance/disappearance consistently
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Track keyboard height changes for consistent scrolling (mobile only — web has no viewInsets)
+    if (!kIsWeb) {
+      final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+      
+      // Handle keyboard appearance/disappearance — check inline, no addPostFrameCallback
       if (keyboardHeight != _lastKeyboardHeight && !_isKeyboardAnimating) {
-        _handleKeyboardChange(keyboardHeight > _lastKeyboardHeight);
+        final wasAppearing = keyboardHeight > _lastKeyboardHeight;
         _lastKeyboardHeight = keyboardHeight;
+        // Schedule microtask to avoid setState-during-build
+        Future.microtask(() {
+          if (mounted) _handleKeyboardChange(wasAppearing);
+        });
       }
-    });
+    }
 
     return Scaffold(
-      appBar: AppBar(
+      // Only show AppBar when not hiding header and not in web layout  
+      appBar: shouldHideHeader ? null : AppBar(
         elevation: 0,
         scrolledUnderElevation: 2.0,
         backgroundColor: theme.brightness == Brightness.dark
@@ -401,9 +548,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           onTap: _showChatPersonDetails,
           child: Row(
             children: [
-              Hero(
-                tag: 'profile-${widget.chatId}',
-                child: Stack(
+              Stack(
                   children: [
                     CircleAvatar(
                       radius: 20,
@@ -440,7 +585,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                         ),
                       ),
                   ],
-                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -490,13 +634,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           ),
         ),
         actions: [
-          // Debug button to manually test read status
-          IconButton(
-            icon: const Icon(Icons.check_circle),
-            color: theme.brightness == Brightness.dark ? null : Colors.white,
-            tooltip: 'Mark as Read (Debug)',
-            onPressed: _manualMarkAsRead,
-          ),
           // Connection status indicator for Ajax-type system
           _buildConnectionIndicator(theme),
           IconButton(
@@ -650,7 +787,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
               // Chat messages area - wrapped in flexible to prevent overflow
               Flexible(
-                child: Container(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final containerWidth = constraints.maxWidth;
+                    return Container(
                   decoration: BoxDecoration(
                     color: colorScheme.surface.withOpacity(0.5),
                     image: kIsWeb
@@ -664,18 +804,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                             repeat: ImageRepeat.repeat,
                           ),
                   ),
-                  // This padding makes the chat content more centered on larger screens
+                  // Use container width (not screen width) for correct padding in web panels
                   padding: isTabletOrDesktop
                       ? EdgeInsets.symmetric(
-                          horizontal: MediaQuery.of(context).size.width * 0.1)
+                          horizontal: containerWidth * 0.05)
                       : EdgeInsets.zero,
-                  child: FutureBuilder<void>(
-                    future: _cacheUsernames(),
-                    builder: (context, snapshot) {
-                      // No loading indicator, directly return StreamBuilder
-                      return StreamBuilder<List<Message>>(
-                        stream:
-                            _chatService.getMessages(widget.chatId, user!.uid),
+                  child: StreamBuilder<List<Message>>(
+                        stream: _messagesStream,
                         builder: (context, snapshot) {
                           // Only show empty state if we have data but it's empty
                           // or if there's an error
@@ -689,8 +824,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                           if (snapshot.hasData) {
                             var messages = snapshot.data!;
 
-                            // Group messages by date
+                            // Group messages by date (memoized — skips if unchanged)
                             _groupMessagesByDate(messages);
+
+                            // Trigger debounced mark-as-read whenever new data arrives
+                            _debouncedMarkAsRead();
 
                             // Only show empty chat if we explicitly have empty data
                             if (messages.isEmpty) {
@@ -713,12 +851,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                 final messagesForDate =
                                     _groupedMessages[dateKey]!;
 
-                                // Calculate max width for bubbles depending on screen size
-                                final screenWidth =
-                                    MediaQuery.of(context).size.width;
+                                // Calculate max width for bubbles using container width (not screen width)
                                 final maxBubbleWidth = isTabletOrDesktop
-                                    ? screenWidth * 0.6 // 60% on larger screens
-                                    : screenWidth * 0.75; // 75% on mobile
+                                    ? containerWidth * 0.6 // 60% on larger screens
+                                    : containerWidth * 0.75; // 75% on mobile
 
                                 return Column(
                                   children: [
@@ -782,10 +918,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                         isFirstInGroup = timeDiff > 2;
                                       }
 
-                                      return Hero(
-                                        tag:
-                                            'message-${message.id}-${message.timestamp.millisecondsSinceEpoch}',
-                                        child: Material(
+                                      return Material(
                                           color: Colors.transparent,
                                           child: Row(
                                             mainAxisAlignment: message.isMe
@@ -846,9 +979,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                                   ),
                                                   child: GestureDetector(
                                                     onLongPress: () {
-                                                      // Show message options with haptic feedback
-                                                      HapticFeedback
-                                                          .mediumImpact();
+                                                      // Show message options with haptic feedback (skip on web)
+                                                      if (!kIsWeb) HapticFeedback.mediumImpact();
                                                       _showMessageOptions(
                                                           message);
                                                     },
@@ -864,6 +996,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                                         isMe: message.isMe,
                                                         isRead: message.isRead,
                                                         bubbleStyle: 'Modern',
+                                                        messageType: message.type,
+                                                        imageUrl: message.type == 'image' ? message.text : null,
+                                                        messageData: _getMessageData(message),
                                                         primaryColor: Theme.of(context).primaryColor,
                                                         borderRadius: const BorderRadius.all(Radius.circular(18)),
                                                         reactions: message.reactions,
@@ -881,7 +1016,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                               ),
                                             ],
                                           ),
-                                        ),
                                       );
                                     }).toList(),
                                   ],
@@ -892,173 +1026,210 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
                         return _buildEmptyChat();
                       },
-                    );
-                    },
-                  ),
+                    ),
+                );
+                  },
                 ),
               ),
 
               // Message input field
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+                    const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8.0),
                 decoration: BoxDecoration(
                   color: theme.brightness == Brightness.dark
-                      ? colorScheme.surfaceVariant.withOpacity(0.5)
-                      : theme.scaffoldBackgroundColor,
+                      ? colorScheme.surface
+                      : Colors.white,
                   boxShadow: [
                     BoxShadow(
                       offset: const Offset(0, -1),
-                      blurRadius: 5,
-                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      color: Colors.black.withOpacity(0.04),
                     ),
                   ],
                 ),
                 child: SafeArea(
                   child: Column(
                     children: [
-                      Row(
-                        children: [
-                          // Attachment button with subtle animation
-                          Material(
-                            color: Colors.transparent,
-                            shape: const CircleBorder(),
-                            clipBehavior: Clip.antiAlias,
-                            child: IconButton(
-                              icon: Icon(
-                                Icons.add_circle_outline,
-                                color: colorScheme.primary,
-                              ),
-                              onPressed: _showAttachmentOptions,
-                              tooltip: 'Attach',
-                              splashColor: colorScheme.primary.withOpacity(0.2),
-                            ),
+                      // Unified capsule input bar
+                      Container(
+                        decoration: BoxDecoration(
+                          color: theme.brightness == Brightness.dark
+                              ? colorScheme.surfaceContainerHighest.withOpacity(0.5)
+                              : const Color(0xFFF5F5F7),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: theme.brightness == Brightness.dark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.04),
                           ),
-                          // Expandable text field
-                          Expanded(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 8.0),
-                              child: TextField(
-                                controller: _messageController,
-                                decoration: InputDecoration(
-                                  hintText: 'Type a message...',
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(24.0),
-                                    borderSide: BorderSide.none,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            // Attachment button inside capsule
+                            Padding(
+                              padding: const EdgeInsets.only(left: 6, bottom: 6),
+                              child: SizedBox(
+                                width: 38,
+                                height: 38,
+                                child: IconButton(
+                                  icon: Icon(
+                                    Icons.add_rounded,
+                                    color: colorScheme.primary,
+                                    size: 22,
                                   ),
-                                  filled: true,
-                                  fillColor: theme.brightness == Brightness.dark
-                                      ? colorScheme.surface.withOpacity(0.6)
-                                      : colorScheme.surface,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0,
-                                    vertical: 10.0,
-                                  ),
-                                  // Emoji button
-                                  suffixIcon: Material(
-                                    color: Colors.transparent,
-                                    shape: const CircleBorder(),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.emoji_emotions_outlined,
-                                        color: _isEmojiPickerOpen
-                                            ? Colors.amber
-                                            : Colors.grey,
-                                      ),
-                                      onPressed: () {
-                                        setState(() {
-                                          _isEmojiPickerOpen =
-                                              !_isEmojiPickerOpen;
-                                          if (_isEmojiPickerOpen) {
-                                            // If emoji picker is opened, hide keyboard
-                                            FocusScope.of(context).unfocus();
-                                          }
-                                        });
-                                      },
-                                      tooltip: 'Emoji',
+                                  onPressed: _showAttachmentOptions,
+                                  tooltip: 'Attach',
+                                  padding: EdgeInsets.zero,
+                                  splashRadius: 18,
+                                ),
+                              ),
+                            ),
+                            // Expandable text field
+                            Expanded(
+                              child: Focus(
+                                onKeyEvent: kIsWeb ? (node, event) {
+                                  if (event is KeyDownEvent &&
+                                      event.logicalKey == LogicalKeyboardKey.enter &&
+                                      !HardwareKeyboard.instance.isShiftPressed) {
+                                    if (_messageController.text.trim().isNotEmpty && !_isSending) {
+                                      _sendMessage();
+                                    }
+                                    return KeyEventResult.handled;
+                                  }
+                                  return KeyEventResult.ignored;
+                                } : null,
+                                child: TextField(
+                                  controller: _messageController,
+                                  decoration: InputDecoration(
+                                    hintText: 'Type a message...',
+                                    hintStyle: TextStyle(
+                                      color: colorScheme.onSurface.withOpacity(0.35),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 4.0,
+                                      vertical: 10.0,
                                     ),
                                   ),
+                                  textCapitalization: TextCapitalization.sentences,
+                                  maxLines: 5,
+                                  minLines: 1,
+                                  keyboardType: TextInputType.multiline,
+                                  style: TextStyle(
+                                    fontSize: 15.5,
+                                    height: 1.35,
+                                    color: theme.brightness == Brightness.dark
+                                        ? Colors.white
+                                        : const Color(0xFF1A1A1A),
+                                  ),
+                                  onTap: () {
+                                    if (_isEmojiPickerOpen) {
+                                      setState(() {
+                                        _isEmojiPickerOpen = false;
+                                      });
+                                    }
+                                  },
+                                  onEditingComplete: () {
+                                    _ensureScrollPosition();
+                                  },
+                                  autofocus: kIsWeb,
                                 ),
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                maxLines: 5,
-                                minLines: 1,
-                                keyboardType: TextInputType.multiline,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: theme.brightness == Brightness.dark
-                                      ? Colors.white
-                                      : Colors.black87,
-                                ),
-                                onTap: () {
-                                  // Hide emoji picker when text field is tapped
-                                  if (_isEmojiPickerOpen) {
-                                    setState(() {
-                                      _isEmojiPickerOpen = false;
-                                    });
-                                  }
-                                  // Remove the auto-scroll that was causing issues
-                                },
-                                // Add focus listener for better keyboard handling
-                                onEditingComplete: () {
-                                  // Ensure scroll position is maintained
-                                  _ensureScrollPosition();
-                                },
                               ),
                             ),
-                          ),
-                          // Send button with animation
-                          AnimatedBuilder(
-                            animation: _sendButtonAnimation,
-                            builder: (context, child) {
-                              return Transform.scale(
-                                scale: _messageController.text.isNotEmpty
-                                    ? 1.0
-                                    : 0.8,
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  margin: const EdgeInsets.only(left: 2.0),
+                            // Emoji button inside capsule
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: SizedBox(
+                                width: 38,
+                                height: 38,
+                                child: IconButton(
+                                  icon: Icon(
+                                    _isEmojiPickerOpen
+                                        ? Icons.keyboard_rounded
+                                        : Icons.emoji_emotions_outlined,
+                                    color: _isEmojiPickerOpen
+                                        ? Colors.amber
+                                        : colorScheme.onSurface.withOpacity(0.4),
+                                    size: 22,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _isEmojiPickerOpen = !_isEmojiPickerOpen;
+                                      if (_isEmojiPickerOpen) {
+                                        FocusScope.of(context).unfocus();
+                                      }
+                                    });
+                                  },
+                                  tooltip: 'Emoji',
+                                  padding: EdgeInsets.zero,
+                                  splashRadius: 18,
+                                ),
+                              ),
+                            ),
+                            // Gradient send button
+                            Padding(
+                              padding: const EdgeInsets.only(right: 5, bottom: 5),
+                              child: AnimatedScale(
+                                scale: _messageController.text.isNotEmpty ? 1.0 : 0.85,
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeOutCubic,
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
                                   decoration: BoxDecoration(
-                                    color: _messageController.text.isEmpty
-                                        ? colorScheme.primary.withOpacity(0.5)
-                                        : colorScheme.primary,
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: _messageController.text.isEmpty
+                                          ? [
+                                              colorScheme.primary.withOpacity(0.4),
+                                              colorScheme.primary.withOpacity(0.3),
+                                            ]
+                                          : [
+                                              colorScheme.primary,
+                                              HSLColor.fromColor(colorScheme.primary)
+                                                  .withHue((HSLColor.fromColor(colorScheme.primary).hue + 18) % 360)
+                                                  .withLightness((HSLColor.fromColor(colorScheme.primary).lightness - 0.06).clamp(0.0, 1.0))
+                                                  .toColor(),
+                                            ],
+                                    ),
                                     shape: BoxShape.circle,
-                                    boxShadow:
-                                        _messageController.text.isNotEmpty
-                                            ? [
-                                                BoxShadow(
-                                                  color: colorScheme.primary
-                                                      .withOpacity(0.4),
-                                                  blurRadius: 8,
-                                                  offset: const Offset(0, 2),
-                                                )
-                                              ]
-                                            : null,
+                                    boxShadow: _messageController.text.isNotEmpty
+                                        ? [
+                                            BoxShadow(
+                                              color: colorScheme.primary.withOpacity(0.35),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ]
+                                        : null,
                                   ),
                                   child: Material(
                                     color: Colors.transparent,
                                     shape: const CircleBorder(),
                                     clipBehavior: Clip.antiAlias,
                                     child: IconButton(
-                                      // Removed spinner icon during send; always show send icon
-                                      icon: const Icon(Icons.send_rounded, color: Colors.white),
+                                      icon: const Icon(Icons.send_rounded,
+                                          color: Colors.white, size: 20),
                                       onPressed: (_messageController.text.isNotEmpty && !_isSending)
                                           ? _sendMessage
                                           : () {
-                                              // Subtle indication that user needs to enter text
-                                              HapticFeedback.lightImpact();
+                                              if (!kIsWeb) HapticFeedback.lightImpact();
                                             },
                                       tooltip: 'Send',
+                                      padding: EdgeInsets.zero,
                                       splashColor: Colors.white24,
                                     ),
                                   ),
                                 ),
-                              );
-                            },
-                          ),
-                        ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
 
                       // Emoji picker
@@ -1333,43 +1504,27 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                     color: Colors.purple,
                     onTap: () {
                       Navigator.pop(context);
-                      // Handle photo selection
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Photo sharing coming soon!'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                      _pickImageFromGallery();
                     },
                   ),
-                  _buildAttachmentOption(
-                    icon: Icons.camera_alt,
-                    label: 'Camera',
-                    color: Colors.red,
-                    onTap: () {
-                      Navigator.pop(context);
-                      // Handle camera
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Camera sharing coming soon!'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                  ),
+                  // Camera not available on web
+                  if (!kIsWeb)
+                    _buildAttachmentOption(
+                      icon: Icons.camera_alt,
+                      label: 'Camera',
+                      color: Colors.red,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _takePictureWithCamera();
+                      },
+                    ),
                   _buildAttachmentOption(
                     icon: Icons.insert_drive_file,
                     label: 'Document',
                     color: Colors.blue,
                     onTap: () {
                       Navigator.pop(context);
-                      // Handle document selection
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Document sharing coming soon!'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                      _pickDocument();
                     },
                   ),
                   _buildAttachmentOption(
@@ -1378,13 +1533,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                     color: Colors.green,
                     onTap: () {
                       Navigator.pop(context);
-                      // Handle location sharing
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Location sharing coming soon!'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
+                      _shareLocation();
                     },
                   ),
                 ],
@@ -1596,30 +1745,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   // Start an audio call
   Future<void> _startAudioCall() async {
-    final CallService callService = CallService();
+    final EnhancedCallService enhancedCallService = EnhancedCallService();
 
     try {
-      // Initialize the call service if it hasn't been already
-      await callService.initialize();
+      // Initialize the enhanced call service if it hasn't been already
+      await enhancedCallService.initialize();
 
-      // Get the chat participant's ID (the person to call)
-      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(widget.chatId)
-          .get();
+      // Use cached chatPersonId to avoid redundant Firestore read
+      String calleeId = _chatPersonId ?? '';
+      if (calleeId.isEmpty) {
+        // Fallback: fetch from Firestore if not yet cached
+        DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+            .collection('chats')
+            .doc(widget.chatId)
+            .get();
 
-      if (!chatDoc.exists) {
-        throw Exception('Chat not found');
-      }
+        if (!chatDoc.exists) {
+          throw Exception('Chat not found');
+        }
 
-      List<dynamic> userIds = chatDoc['userIds'];
-      String calleeId = "";
-
-      // Find the other user in the chat
-      for (var id in userIds) {
-        if (id != user!.uid) {
-          calleeId = id;
-          break;
+        List<dynamic> userIds = chatDoc['userIds'];
+        for (var id in userIds) {
+          if (id != user!.uid) {
+            calleeId = id;
+            _chatPersonId = id; // Cache for future use
+            break;
+          }
         }
       }
 
@@ -1632,8 +1783,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = true; // Reuse the sending indicator for loading
       });
 
-      // Start the call
-      Call? call = await callService.startCall(
+      // Start the call using enhanced service
+      Call? call = await enhancedCallService.startCall(
           calleeId, false); // false = audio call, not video
 
       setState(() {
@@ -1644,12 +1795,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         throw Exception('Failed to start call');
       }
 
-      // Navigate to the call screen
+      // Navigate to the enhanced call screen
       if (mounted) {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => AudioCallScreen(
+            builder: (context) => EnhancedAudioCallScreen(
               call: call,
               isIncoming: false,
             ),
@@ -1661,7 +1812,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = false;
       });
 
-      print('Error starting call: $e');
+      print('Error starting enhanced call: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1675,30 +1826,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   // Start a video call
   Future<void> _startVideoCall() async {
-    final CallService callService = CallService();
+    final EnhancedCallService enhancedCallService = EnhancedCallService();
 
     try {
-      // Initialize the call service if it hasn't been already
-      await callService.initialize();
+      // Initialize the enhanced call service if it hasn't been already
+      await enhancedCallService.initialize();
 
-      // Get the chat participant's ID (the person to call)
-      DocumentSnapshot chatDoc = await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(widget.chatId)
-          .get();
+      // Use cached chatPersonId to avoid redundant Firestore read
+      String calleeId = _chatPersonId ?? '';
+      if (calleeId.isEmpty) {
+        // Fallback: fetch from Firestore if not yet cached
+        DocumentSnapshot chatDoc = await FirebaseFirestore.instance
+            .collection('chats')
+            .doc(widget.chatId)
+            .get();
 
-      if (!chatDoc.exists) {
-        throw Exception('Chat not found');
-      }
+        if (!chatDoc.exists) {
+          throw Exception('Chat not found');
+        }
 
-      List<dynamic> userIds = chatDoc['userIds'];
-      String calleeId = "";
-
-      // Find the other user in the chat
-      for (var id in userIds) {
-        if (id != user!.uid) {
-          calleeId = id;
-          break;
+        List<dynamic> userIds = chatDoc['userIds'];
+        for (var id in userIds) {
+          if (id != user!.uid) {
+            calleeId = id;
+            _chatPersonId = id; // Cache for future use
+            break;
+          }
         }
       }
 
@@ -1711,8 +1864,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = true; // Reuse the sending indicator for loading
       });
 
-      // Start the call
-      Call? call = await callService.startCall(
+      // Start the call using enhanced service
+      Call? call = await enhancedCallService.startCall(
           calleeId, true); // true = video call, not audio only
 
       setState(() {
@@ -1723,7 +1876,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         throw Exception('Failed to start call');
       }
 
-      // Navigate to the call screen
+      // Navigate to the video call screen (still using the original for now)
       if (mounted) {
         Navigator.push(
           context,
@@ -1740,7 +1893,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = false;
       });
 
-      print('Error starting video call: $e');
+      print('Error starting enhanced video call: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1840,6 +1993,237 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           }
         });
       }
+    }
+  }
+
+  // Pick image from gallery
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+        maxWidth: 1920,
+        maxHeight: 1080,
+      );
+
+      if (image != null) {
+        await _uploadAndSendImage(image);
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick image: ${e.toString()}');
+    }
+  }
+
+  // Take picture with camera
+  Future<void> _takePictureWithCamera() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 80,
+        maxWidth: 1920,
+        maxHeight: 1080,
+      );
+
+      if (image != null) {
+        await _uploadAndSendImage(image);
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to take picture: ${e.toString()}');
+    }
+  }
+
+  // Upload image to Firebase Storage and send message
+  Future<void> _uploadAndSendImage(XFile imageFile) async {
+    if (user == null) return;
+
+    try {
+      // Send image message instantly using WhatsApp-like approach
+      await _chatService.sendImageMessageInstant(
+        widget.chatId,
+        imageFile.path,
+        user!.uid,
+        imageFile.name,
+      );
+
+      _showQuickFeedback('Image sending...', Colors.blue);
+    } catch (e) {
+      _showErrorSnackBar('Failed to send image: ${e.toString()}');
+    }
+  }
+
+  // Pick document
+  Future<void> _pickDocument() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx'],
+        allowMultiple: false,
+        withData: kIsWeb, // Request bytes on web since path is null
+      );
+
+      if (result != null) {
+        final file = result.files.single;
+        // On web, path is null but bytes are available; on mobile, path is set
+        if (file.path != null || (kIsWeb && file.bytes != null)) {
+          await _uploadAndSendDocument(file);
+        }
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick document: ${e.toString()}');
+    }
+  }
+
+  // Upload document to Firebase Storage and send message
+  Future<void> _uploadAndSendDocument(PlatformFile documentFile) async {
+    if (user == null) return;
+
+    // Check file size (limit to 10MB)
+    if (documentFile.size > 10 * 1024 * 1024) {
+      _showErrorSnackBar('File size must be less than 10MB');
+      return;
+    }
+
+    try {
+      String? filePath = documentFile.path;
+      if (kIsWeb && documentFile.bytes != null) {
+        // For web, we need to save bytes to a temporary path
+        // This is a simplified approach - in production you might handle this differently
+        filePath = documentFile.name;
+      } else if (!kIsWeb && documentFile.path == null) {
+        throw Exception('Could not access file path');
+      }
+
+      // Send document message instantly using WhatsApp-like approach
+      await _chatService.sendDocumentMessageInstant(
+        widget.chatId,
+        filePath!,
+        user!.uid,
+        documentFile.name,
+        documentFile.size,
+      );
+
+      _showQuickFeedback('Document sending...', Colors.blue);
+    } catch (e) {
+      _showErrorSnackBar('Failed to send document: ${e.toString()}');
+    }
+  }
+
+  // Share current location
+  Future<void> _shareLocation() async {
+    try {
+      // Check location permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _showErrorSnackBar('Location permissions are denied');
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        _showErrorSnackBar('Location permissions are permanently denied. Please enable them in settings.');
+        return;
+      }
+
+      // Show quick loading feedback
+      _showQuickFeedback('Getting location...', Colors.blue);
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      // Send location message instantly
+      await _chatService.sendLocationMessageInstant(
+        widget.chatId,
+        user!.uid,
+        position.latitude,
+        position.longitude,
+      );
+
+      _showQuickFeedback('Location shared successfully', Colors.green);
+    } catch (e) {
+      _showErrorSnackBar('Failed to get location: ${e.toString()}');
+    }
+  }
+
+  // Upload progress and loading indicators
+  OverlayEntry? _uploadOverlay;
+
+  void _showUploadingIndicator(String message) {
+    _hideUploadingIndicator(); // Remove any existing overlay
+
+    _uploadOverlay = OverlayEntry(
+      builder: (context) => Container(
+        color: Colors.black54,
+        child: Center(
+          child: Card(
+            margin: const EdgeInsets.all(20),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(message),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(_uploadOverlay!);
+  }
+
+  void _updateUploadProgress(double progress) {
+    // Update progress if needed - for now we just show loading
+  }
+
+  void _hideUploadingIndicator() {
+    _uploadOverlay?.remove();
+    _uploadOverlay = null;
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  // Helper method to extract message data based on type
+  Map<String, dynamic>? _getMessageData(Message message) {
+    switch (message.type) {
+      case 'document':
+        // Extract document data from Firebase document
+        return {
+          'fileName': 'Document', // Default, will be enhanced when we get data from Firestore
+          'fileSize': 0,
+        };
+      case 'location':
+        // Extract location data from message content
+        final locationMatch = RegExp(r'Location: (-?\d+\.?\d*), (-?\d+\.?\d*)').firstMatch(message.text);
+        if (locationMatch != null) {
+          return {
+            'latitude': double.tryParse(locationMatch.group(1) ?? '0') ?? 0.0,
+            'longitude': double.tryParse(locationMatch.group(2) ?? '0') ?? 0.0,
+          };
+        }
+        return {'latitude': 0.0, 'longitude': 0.0};
+      default:
+        return null;
     }
   }
 }

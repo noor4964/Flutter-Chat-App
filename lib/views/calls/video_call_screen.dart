@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter_chat_app/widgets/voice_fix_button.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final Call call;
@@ -622,58 +623,79 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       );
     } else if (_isCallConnected) {
       // Video call controls with camera toggles
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            // Mute button
-            _buildCallButton(
-              icon: _isMuted ? Icons.mic_off : Icons.mic,
-              backgroundColor: Colors.black.withOpacity(0.5),
-              iconColor: _isMuted ? Colors.red : Colors.white,
-              onPressed: _toggleMute,
-              label: 'Mute',
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Mute button
+                _buildCallButton(
+                  icon: _isMuted ? Icons.mic_off : Icons.mic,
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                  iconColor: _isMuted ? Colors.red : Colors.white,
+                  onPressed: _toggleMute,
+                  label: 'Mute',
+                ),
+    
+                // Camera toggle button
+                _buildCallButton(
+                  icon: _isCameraOn ? Icons.videocam : Icons.videocam_off,
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                  iconColor: _isCameraOn ? Colors.white : Colors.red,
+                  onPressed: _toggleCamera,
+                  label: _isCameraOn ? 'Camera' : 'Camera Off',
+                ),
+    
+                // End call button
+                _buildCallButton(
+                  icon: Icons.call_end,
+                  backgroundColor: Colors.red,
+                  size: 70,
+                  iconSize: 32,
+                  onPressed: _endCall,
+                  label: 'End',
+                ),
+    
+                // Switch camera button
+                _buildCallButton(
+                  icon: Icons.flip_camera_ios,
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                  iconColor: Colors.white,
+                  onPressed: _isCameraOn ? _switchCamera : null,
+                  label: 'Flip',
+                ),
+    
+                // Speaker button
+                _buildCallButton(
+                  icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_off,
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                  iconColor: _isSpeakerOn ? Colors.white : Colors.red,
+                  onPressed: _toggleSpeaker,
+                  label: 'Speaker',
+                ),
+              ],
             ),
-
-            // Camera toggle button
-            _buildCallButton(
-              icon: _isCameraOn ? Icons.videocam : Icons.videocam_off,
-              backgroundColor: Colors.black.withOpacity(0.5),
-              iconColor: _isCameraOn ? Colors.white : Colors.red,
-              onPressed: _toggleCamera,
-              label: _isCameraOn ? 'Camera' : 'Camera Off',
+          ),
+          
+          // Add Voice Fix Button below main controls
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.black.withOpacity(0.5),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: const VoiceFixButton(
+                text: 'Fix Voice Issues',
+                color: Color(0xFF2E7D32), // A green color
+              ),
             ),
-
-            // End call button
-            _buildCallButton(
-              icon: Icons.call_end,
-              backgroundColor: Colors.red,
-              size: 70,
-              iconSize: 32,
-              onPressed: _endCall,
-              label: 'End',
-            ),
-
-            // Switch camera button
-            _buildCallButton(
-              icon: Icons.flip_camera_ios,
-              backgroundColor: Colors.black.withOpacity(0.5),
-              iconColor: Colors.white,
-              onPressed: _isCameraOn ? _switchCamera : null,
-              label: 'Flip',
-            ),
-
-            // Speaker button
-            _buildCallButton(
-              icon: _isSpeakerOn ? Icons.volume_up : Icons.volume_off,
-              backgroundColor: Colors.black.withOpacity(0.5),
-              iconColor: _isSpeakerOn ? Colors.white : Colors.red,
-              onPressed: _toggleSpeaker,
-              label: 'Speaker',
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     } else {
       // Connecting controls (just end call)

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
+import 'package:flutter_chat_app/providers/chat_provider.dart';
+import 'package:flutter_chat_app/providers/feed_provider.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
@@ -19,6 +22,8 @@ import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/screens/notification_test_screen.dart';
+import 'package:flutter_chat_app/services/calls/enhanced_call_service.dart';
+import 'package:flutter_chat_app/views/calls/enhanced_audio_call_screen.dart';
 
 import 'services/story_service.dart';
 
@@ -63,6 +68,16 @@ void main() async {
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
         ChangeNotifierProvider(
             create: (context) => app_provider.AuthProvider()),
+        ChangeNotifierProvider(create: (context) {
+          final chatProvider = ChatProvider();
+          chatProvider.initialize();
+          return chatProvider;
+        }),
+        ChangeNotifierProvider(create: (context) {
+          final feedProvider = FeedProvider();
+          feedProvider.initialize();
+          return feedProvider;
+        }),
       ],
       child: MyApp(),
     ),
@@ -269,12 +284,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Add WidgetsBindingObserver to track app lifecycle
+  
+  StreamSubscription<Call>? _incomingCallSubscription;
+  EnhancedCallService? _enhancedCallService;
 
   @override
   void initState() {
     super.initState();
     _initializeCollections();
     _initializePresence();
+    _initializeCallListening();
 
     // Register lifecycle observer
     WidgetsBinding.instance.addObserver(this);
@@ -285,6 +304,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Unregister lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
     _setUserOffline();
+    _incomingCallSubscription?.cancel();
     super.dispose();
   }
 
@@ -325,6 +345,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       print('✅ User set to online');
     } catch (e) {
       print('❌ Error initializing presence: $e');
+    }
+  }
+
+  // Initialize incoming call listening
+  Future<void> _initializeCallListening() async {
+    try {
+      _enhancedCallService = EnhancedCallService();
+      await _enhancedCallService!.initialize();
+      
+      // Listen for incoming calls
+      _incomingCallSubscription = _enhancedCallService!.listenForIncomingCalls().listen(
+        (Call incomingCall) {
+          print('📞 Incoming call detected: ${incomingCall.callId}');
+          
+          // Only handle actual incoming calls (not the empty placeholder)
+          if (incomingCall.callId != 'no-call' && incomingCall.status == 'ringing') {
+            _handleIncomingCall(incomingCall);
+          }
+        },
+        onError: (error) {
+          print('❌ Error listening for incoming calls: $error');
+        },
+      );
+      
+      print('✅ Call listening initialized');
+    } catch (e) {
+      print('❌ Error initializing call listening: $e');
+    }
+  }
+
+  // Handle incoming call by navigating to the call screen
+  void _handleIncomingCall(Call call) {
+    print('🔔 Handling incoming call from: ${call.callerName}');
+    
+    // Navigate to the enhanced audio call screen
+    if (mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => EnhancedAudioCallScreen(
+            call: call,
+            isIncoming: true,
+          ),
+        ),
+      );
     }
   }
 

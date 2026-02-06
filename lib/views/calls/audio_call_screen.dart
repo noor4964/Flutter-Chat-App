@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter_chat_app/widgets/voice_fix_button.dart';
 
 class AudioCallScreen extends StatefulWidget {
   final Call call;
@@ -187,6 +188,55 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       ),
     );
   }
+  
+  // Build diagnostic overlay 
+  Widget _buildDiagnosticOverlay() {
+    return Positioned(
+      top: 60,
+      right: 10,
+      child: GestureDetector(
+        onTap: () {
+          // Attempt to fix audio issues
+          _callService.fixVoiceIssues();
+          
+          // Show feedback to user
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Fixing audio issues...'),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(
+                Icons.support_agent,
+                color: Colors.white,
+                size: 18,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Fix Audio',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   // Toggle mute status
   Future<void> _toggleMute() async {
@@ -317,13 +367,16 @@ class _AudioCallScreenState extends State<AudioCallScreen>
             ),
           ),
           child: SafeArea(
-            child: Column(
-              children: [
-                const Spacer(flex: 1),
+            child: Stack(
+              children: <Widget>[
+                // Main content
+                Column(
+                  children: [
+                    const Spacer(flex: 1),
 
-                // User avatar with ripple effect
-                Center(
-                  child: Stack(
+                    // User avatar with ripple effect
+                    Center(
+                      child: Stack(
                     alignment: Alignment.center,
                     children: [
                       // Multiple ripple effects
@@ -414,6 +467,56 @@ class _AudioCallScreenState extends State<AudioCallScreen>
                 const SizedBox(height: 24),
               ],
             ),
+                
+                // Add diagnostic overlay if call is connected
+                if (_isCallConnected)
+                  Positioned(
+                    top: 60,
+                    right: 10,
+                    child: GestureDetector(
+                      onTap: () {
+                        // Attempt to fix audio issues
+                        _callService.fixVoiceIssues();
+                        
+                        // Show feedback to user
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Fixing audio issues...'),
+                            duration: Duration(seconds: 2),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(
+                              Icons.support_agent,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Fix Audio',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -489,6 +592,23 @@ class _AudioCallScreenState extends State<AudioCallScreen>
               ),
             ],
           ),
+          
+          // Add Voice Fix Button
+          if (_isCallConnected)
+            Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  color: Colors.black.withOpacity(0.3),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: const VoiceFixButton(
+                  text: 'Fix Voice Issues',
+                  color: Color(0xFF2E7D32), // A green color
+                ),
+              ),
+            ),
         ],
       );
     }

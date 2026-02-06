@@ -14,11 +14,24 @@ class DesktopChatScreen extends StatefulWidget {
 class _DesktopChatScreenState extends State<DesktopChatScreen> {
   String? selectedChatId;
   String? selectedChatName;
+  String? selectedProfileImageUrl;
+  bool selectedIsOnline = false;
 
-  void onChatSelected(String chatId, String chatName) {
+  void onChatSelected(
+      String chatId, String chatName, String? profileImageUrl, bool isOnline) {
+    print('=== DesktopChatScreen - Chat Selection ===');
+    print('Chat ID: $chatId');
+    print('Chat Name: $chatName');
+    print('Profile URL: $profileImageUrl');
+    print('Is Online: $isOnline');
+    print('Previous Profile URL: $selectedProfileImageUrl');
+    print('==========================================');
+
     setState(() {
       selectedChatId = chatId;
       selectedChatName = chatName;
+      selectedProfileImageUrl = profileImageUrl;
+      selectedIsOnline = isOnline;
     });
   }
 
@@ -42,8 +55,12 @@ class _DesktopChatScreenState extends State<DesktopChatScreen> {
     // Show chat details if a chat is selected
     if (selectedChatId != null && selectedChatName != null) {
       rightPanel = ChatDetailScreen(
+        key: ValueKey(
+            'chat_${selectedChatId}_${selectedChatName.hashCode}_${selectedProfileImageUrl?.hashCode ?? 0}'), // Unique key for each chat/profile combo
         chatId: selectedChatId!,
         chatName: selectedChatName!,
+        profileImageUrl: selectedProfileImageUrl,
+        isOnline: selectedIsOnline,
       );
     }
 

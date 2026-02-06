@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/models/message_model.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_chat_app/services/auth_service.dart';
 import 'package:flutter_chat_app/services/chat_notification_service.dart';
 import 'package:flutter_chat_app/services/enhanced_notification_service.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
+import 'dart:io';
 
 class ChatService {
   // Expose auth service for Windows platform checks
@@ -21,6 +23,7 @@ class ChatService {
   bool get _isWeb => kIsWeb;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // Send a text message - Optimized for performance
   Future<void> sendMessage(
@@ -228,7 +231,116 @@ class ChatService {
     }
   }
 
-  // Send an image message - Enhanced with notifications
+  // Send an image message immediately with upload status - WhatsApp style
+  Future<String> sendImageMessageInstant(
+      String chatId, String localPath, String senderId, String fileName) async {
+    if (_isWindowsWithoutFirebase) {
+      print('Image message sending skipped on Windows');
+      return '';
+    }
+
+    try {
+      // Add image message to chat collection immediately with upload status
+      DocumentReference docRef = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'content': localPath, // Initially use local path
+        'senderId': senderId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'image',
+        'readBy': [senderId],
+        'uploadStatus': 'uploading', // Track upload status
+        'fileName': fileName,
+        'localPath': localPath,
+      });
+
+      // Update chat metadata with indicator of image message
+      await _firestore.collection('chats').doc(chatId).update({
+        'lastMessage': PlatformHelper.isDesktop ? '📷 Image' : '🖼️ Image',
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Clear typing indicator when sending a message
+      await setTypingStatus(chatId, senderId, false);
+
+      // Send enhanced notifications for image
+      _sendMediaNotificationToRecipients(chatId, senderId, '📷 Photo', 'image');
+
+      // Start background upload
+      _uploadImageInBackground(chatId, docRef.id, localPath, fileName);
+      
+      return docRef.id;
+    } catch (e) {
+      print('Error sending image message: $e');
+      throw e;
+    }
+  }
+
+  // Background image upload
+  Future<void> _uploadImageInBackground(String chatId, String messageId, String localPath, String fileName) async {
+    try {
+      // Upload to Firebase Storage
+      final ref = _storage.ref().child('images/${DateTime.now().millisecondsSinceEpoch}_$fileName');
+      UploadTask uploadTask = ref.putFile(File(localPath));
+      
+      // Update upload progress
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        double progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        _updateMessageUploadProgress(chatId, messageId, progress);
+      });
+
+      // Wait for upload completion
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      // Update message with final URL and completed status
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'content': downloadUrl,
+        'uploadStatus': 'completed',
+        'uploadProgress': 100.0,
+      });
+
+    } catch (e) {
+      print('Error uploading image: $e');
+      // Update message with error status
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'uploadStatus': 'failed',
+        'error': e.toString(),
+      });
+    }
+  }
+
+  // Update message upload progress
+  Future<void> _updateMessageUploadProgress(String chatId, String messageId, double progress) async {
+    try {
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'uploadProgress': progress * 100,
+      });
+    } catch (e) {
+      print('Error updating upload progress: $e');
+    }
+  }
+
+  // Legacy method for backward compatibility
   Future<void> sendImageMessage(
       String chatId, String imageUrl, String senderId) async {
     if (_isWindowsWithoutFirebase) {
@@ -248,6 +360,7 @@ class ChatService {
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'image',
         'readBy': [senderId], // Initialize with sender as having read it
+        'uploadStatus': 'completed', // Mark as already uploaded
       });
 
       // Update chat metadata with indicator of image message
@@ -265,6 +378,246 @@ class ChatService {
       _sendMediaNotificationToRecipients(chatId, senderId, '📷 Photo', 'image');
     } catch (e) {
       print('Error sending image message: $e');
+      throw e;
+    }
+  }
+
+  // Send a document message
+  Future<void> sendDocumentMessage(
+      String chatId, String documentUrl, String senderId, String fileName, int fileSize) async {
+    if (_isWindowsWithoutFirebase) {
+      print('Document message sending skipped on Windows');
+      return;
+    }
+
+    try {
+      // Add document message to chat collection
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'content': documentUrl,
+        'senderId': senderId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'document',
+        'fileName': fileName,
+        'fileSize': fileSize,
+        'readBy': [senderId], // Initialize with sender as having read it
+      });
+
+      // Update chat metadata with indicator of document message
+      await _firestore.collection('chats').doc(chatId).update({
+        'lastMessage': PlatformHelper.isDesktop ? '📄 Document' : '📄 $fileName',
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Clear typing indicator when sending a message
+      await setTypingStatus(chatId, senderId, false);
+
+      // Send enhanced notifications for document
+      _sendMediaNotificationToRecipients(chatId, senderId, '📄 Document', 'document');
+    } catch (e) {
+      print('Error sending document message: $e');
+      throw e;
+    }
+  }
+
+  // Send a document message instantly (WhatsApp-like)
+  Future<String> sendDocumentMessageInstant(
+      String chatId, String localPath, String senderId, String fileName, int fileSize) async {
+    if (_isWindowsWithoutFirebase) {
+      print('Document message sending skipped on Windows');
+      return '';
+    }
+
+    try {
+      // Add document message to chat collection immediately with upload status
+      DocumentReference docRef = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'content': '', // Will be updated with download URL after upload
+        'senderId': senderId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'document',
+        'fileName': fileName,
+        'fileSize': fileSize,
+        'readBy': [senderId],
+        'uploadStatus': 'uploading', // Track upload status
+        'uploadProgress': 0.0, // Track upload progress
+      });
+
+      String messageId = docRef.id;
+
+      // Update chat metadata
+      await _firestore.collection('chats').doc(chatId).update({
+        'lastMessage': PlatformHelper.isDesktop ? '📄 Document' : '📄 $fileName',
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Clear typing indicator
+      await setTypingStatus(chatId, senderId, false);
+
+      // Start background upload
+      _uploadDocumentInBackground(chatId, messageId, localPath, fileName);
+
+      return messageId;
+    } catch (e) {
+      print('Error sending document message instantly: $e');
+      throw e;
+    }
+  }
+
+  // Upload document in background
+  Future<void> _uploadDocumentInBackground(
+      String chatId, String messageId, String localPath, String fileName) async {
+    try {
+      // Create unique filename
+      final String uniqueFileName = '${DateTime.now().millisecondsSinceEpoch}_$fileName';
+      final String filePath = 'chat_documents/$chatId/$uniqueFileName';
+
+      // Upload to Firebase Storage
+      final Reference storageRef = _storage.ref().child(filePath);
+      
+      UploadTask uploadTask;
+      if (kIsWeb) {
+        final file = File(localPath);
+        final bytes = await file.readAsBytes();
+        uploadTask = storageRef.putData(bytes);
+      } else {
+        uploadTask = storageRef.putFile(File(localPath));
+      }
+
+      // Update upload progress
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        double progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        _updateMessageUploadProgress(chatId, messageId, progress);
+      });
+
+      // Wait for upload completion
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      // Update message with final URL and completed status
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'content': downloadUrl,
+        'uploadStatus': 'completed',
+        'uploadProgress': 100.0,
+      });
+
+      // Send notification after upload completes
+      _sendMediaNotificationToRecipients(chatId, '', '📄 Document', 'document');
+
+    } catch (e) {
+      print('Error uploading document: $e');
+      // Update message with error status
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'uploadStatus': 'failed',
+        'uploadProgress': 0.0,
+      });
+    }
+  }
+
+  // Send a location message
+  Future<void> sendLocationMessage(
+      String chatId, String senderId, double latitude, double longitude) async {
+    if (_isWindowsWithoutFirebase) {
+      print('Location message sending skipped on Windows');
+      return;
+    }
+
+    try {
+      // Add location message to chat collection
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'content': 'Location: $latitude, $longitude',
+        'senderId': senderId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'location',
+        'latitude': latitude,
+        'longitude': longitude,
+        'readBy': [senderId], // Initialize with sender as having read it
+      });
+
+      // Update chat metadata with indicator of location message
+      await _firestore.collection('chats').doc(chatId).update({
+        'lastMessage': PlatformHelper.isDesktop ? '📍 Location' : '📍 Location shared',
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Clear typing indicator when sending a message
+      await setTypingStatus(chatId, senderId, false);
+
+      // Send enhanced notifications for location
+      _sendMediaNotificationToRecipients(chatId, senderId, '📍 Location', 'location');
+    } catch (e) {
+      print('Error sending location message: $e');
+      throw e;
+    }
+  }
+
+  // Send a location message instantly (already instant, but keeping for consistency)
+  Future<String> sendLocationMessageInstant(
+      String chatId, String senderId, double latitude, double longitude) async {
+    if (_isWindowsWithoutFirebase) {
+      print('Location message sending skipped on Windows');
+      return '';
+    }
+
+    try {
+      // Add location message to chat collection
+      DocumentReference docRef = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'content': 'Location: $latitude, $longitude',
+        'senderId': senderId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'location',
+        'latitude': latitude,
+        'longitude': longitude,
+        'readBy': [senderId],
+      });
+
+      // Update chat metadata with indicator of location message
+      await _firestore.collection('chats').doc(chatId).update({
+        'lastMessage': PlatformHelper.isDesktop ? '📍 Location' : '📍 Location shared',
+        'lastMessageSenderId': senderId,
+        'lastMessageReadBy': [senderId],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Clear typing indicator when sending a message
+      await setTypingStatus(chatId, senderId, false);
+
+      // Send enhanced notifications for location
+      _sendMediaNotificationToRecipients(chatId, senderId, '📍 Location', 'location');
+
+      return docRef.id;
+    } catch (e) {
+      print('Error sending location message: $e');
       throw e;
     }
   }
@@ -477,9 +830,6 @@ class ChatService {
     if (_isWindowsWithoutFirebase) return;
 
     try {
-      print(
-          '🔄 Starting to mark messages as read in chat $chatId for user $userId');
-
       // First mark the chat as read at the chat level
       await markChatAsRead(chatId, userId);
 
@@ -492,9 +842,6 @@ class ChatService {
           .limit(50) // Get most recent 50 messages
           .get();
 
-      print(
-          '📄 Found ${messagesQuery.docs.length} messages to process for read status');
-
       // Use a batch to update multiple messages efficiently
       final batch = _firestore.batch();
       final now = FieldValue.serverTimestamp();
@@ -505,10 +852,7 @@ class ChatService {
         String senderId = data['senderId'] ?? '';
         
         // Only process messages NOT sent by the current user
-        if (senderId == userId) {
-          print('⏭️ Skipping message ${doc.id} - sent by current user ($userId)');
-          continue;
-        }
+        if (senderId == userId) continue;
         
         // Initialize empty list if readBy doesn't exist
         List<dynamic> readBy = [];
@@ -517,14 +861,8 @@ class ChatService {
           readBy = List<dynamic>.from(data['readBy']);
         }
 
-        print('📋 Processing message ${doc.id}:');
-        print('   👤 Sender: $senderId');
-        print('   � Current User: $userId');
-        print('   📋 Current readBy: $readBy');
-
         // Only update if user hasn't read it yet
         if (!readBy.contains(userId)) {
-          print('✅ Adding $userId to readBy list for message ${doc.id}');
           readBy.add(userId);
           batch.update(doc.reference, {
             'readBy': readBy,
@@ -532,23 +870,14 @@ class ChatService {
           });
 
           updatedCount++;
-        } else {
-          print('👁️ Message ${doc.id} already read by $userId');
         }
       }
 
       if (updatedCount > 0) {
         await batch.commit();
-        print('✅ Successfully marked $updatedCount messages as read');
-        
-        // Force a small delay to ensure Firestore updates propagate
-        await Future.delayed(const Duration(milliseconds: 500));
-      } else {
-        print('ℹ️ No new messages to mark as read');
       }
     } catch (e) {
       print('❌ Error marking messages as read: $e');
-      print('Stack trace: ${StackTrace.current}');
     }
   }
 
@@ -569,12 +898,9 @@ class ChatService {
 
     // Combine both streams to ensure we get updates when either messages or read statuses change
     return messagesStream.map((snapshot) {
-      print('Message stream updated with ${snapshot.docs.length} messages');
-      
-      // Auto-mark messages as read when stream updates (indicating user is viewing)
-      Future.delayed(const Duration(milliseconds: 100), () {
-        markMessagesAsRead(chatId, currentUserId);
-      });
+      // NOTE: markMessagesAsRead removed from here — it caused a feedback loop:
+      // timer writes readBy → snapshot fires → mapper calls markMessagesAsRead → more writes.
+      // Read-marking is now handled by a debouncer in chat_screen.dart.
 
       return snapshot.docs.map((doc) {
         try {
@@ -586,12 +912,8 @@ class ChatService {
             'id': doc.id, // Ensure ID is always available
           };
 
-          // Create message from JSON data and print debug info for read status
+          // Create message from JSON data
           final message = Message.fromJson(messageData, currentUserId);
-          if (message.isMe) {
-            print(
-                'Message ${message.id} status: ${message.isRead ? 'READ' : 'UNREAD'}, readBy: ${messageData['readBy']}');
-          }
 
           return message;
         } catch (e) {

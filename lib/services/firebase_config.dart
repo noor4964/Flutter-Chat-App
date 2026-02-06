@@ -73,15 +73,35 @@ class FirebaseConfig {
         await Firebase.initializeApp();
       }
 
-      // Configure Firestore settings with safer defaults
+      // Configure Firestore settings with generous offline cache.
+      // 100 MB gives the feed, chats, and user docs plenty of room to
+      // survive cold starts and temporary connectivity drops.
       try {
-        FirebaseFirestore.instance.settings = Settings(
+        FirebaseFirestore.instance.settings = const Settings(
           persistenceEnabled: true,
-          cacheSizeBytes: 10485760, // 10 MB - more conservative than unlimited
+          cacheSizeBytes: 104857600, // 100 MB
         );
-        print('🔥 Configured Firestore with custom settings');
+        print('🔥 Configured Firestore persistence (100 MB cache)');
       } catch (firestoreError) {
         print('⚠️ Firestore settings error (non-critical): $firestoreError');
+      }
+
+      // On web, enable multi-tab IndexedDB persistence so the feed cache
+      // is shared across browser tabs and survives full page reloads.
+      // ignore: deprecated_member_use — `synchronizeTabs` is only
+      // accessible through the deprecated `enablePersistence` API in
+      // cloud_firestore 4.x; no alternative exists yet.
+      if (kIsWeb) {
+        try {
+          // ignore: deprecated_member_use
+          FirebaseFirestore.instance.enablePersistence(
+            const PersistenceSettings(synchronizeTabs: true),
+          );
+          print('🔥 Enabled multi-tab IndexedDB persistence for web');
+        } catch (e) {
+          // Already enabled or not supported — safe to ignore.
+          print('⚠️ Web persistence note: $e');
+        }
       }
 
       // Configure Firebase Auth persistence for web

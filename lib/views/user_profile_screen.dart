@@ -29,8 +29,23 @@ class UserProfileScreen extends StatelessWidget {
           children: [
             const SizedBox(height: 20),
             CircleAvatar(
-              backgroundImage: NetworkImage(profileImageUrl),
+              backgroundImage: profileImageUrl.isNotEmpty 
+                ? NetworkImage(profileImageUrl) 
+                : null,
+              backgroundColor: profileImageUrl.isEmpty 
+                ? Theme.of(context).primaryColor 
+                : null,
               radius: 50,
+              child: profileImageUrl.isEmpty 
+                ? Text(
+                    username.isNotEmpty ? username[0].toUpperCase() : '?',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ) 
+                : null,
             ),
             const SizedBox(height: 10),
             Text(

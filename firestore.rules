@@ -60,6 +60,8 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow create: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds;
         allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds;
+        // Allow chat members to update messages (e.g., markMessagesAsRead updates readBy array)
+        allow update: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.userIds;
         // Updated to allow any chat member to delete messages when clearing chat history
         allow delete: if isAuthenticated() && (
           // The sender can always delete their own messages

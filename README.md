@@ -1,6 +1,6 @@
 # flutter_chat_app
 
-A comprehensive Flutter-based communication platform with real-time messaging, voice/video calling, and social features. Built with modern architecture principles, the application supports multiple platforms including Android, iOS, web, Windows, Linux, and macOS.
+A comprehensive Flutter-based communication platform with real-time messaging, voice/video calling, and social features. Built with modern architecture principles, the application supports multiple platforms including Android, web, Windows, Linux, and macOS.
 
 ## Features
 

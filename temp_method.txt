@@ -1,0 +1,22 @@
+// Add isAudioWorking method to EnhancedCallService
+bool isAudioWorking() {
+  // Delegate to base service and add enhanced checks
+  bool baseAudioWorking = _baseCallService.isAudioWorking();
+  
+  // Add additional enhanced checks if available
+  // For example, check more statistics or call quality
+  if (_lastStatistics != null) {
+    // Consider audio not working if packet loss rate is too high
+    if (_lastStatistics!.audioLossRate > 0.25) {
+      return false;
+    }
+    
+    // Consider audio not working if call quality is poor or critical
+    if (_lastStatistics!.quality == CallQuality.poor || 
+        _lastStatistics!.quality == CallQuality.critical) {
+      return false;
+    }
+  }
+  
+  return baseAudioWorking;
+}

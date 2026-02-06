@@ -15,6 +15,11 @@ import 'package:flutter_chat_app/views/story_view_screen.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
 import 'package:flutter_chat_app/views/friends_profile_screen.dart';
+import 'package:flutter_chat_app/widgets/web_layout_wrapper.dart';
+import 'package:flutter_chat_app/widgets/messenger_left_sidebar.dart';
+import 'package:flutter_chat_app/widgets/messenger_right_sidebar.dart';
+import 'package:flutter_chat_app/widgets/chat_layout_with_main_sidebar.dart';
+import 'package:flutter_chat_app/services/platform_helper.dart';
 
 class MessengerHomeScreen extends StatefulWidget {
   final bool isDesktop;
@@ -30,7 +35,6 @@ class MessengerHomeScreen extends StatefulWidget {
 
 class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   int _currentIndex = 0;
-  final PageController _pageController = PageController();
   final FirebaseErrorHandler _errorHandler = FirebaseErrorHandler();
   bool _isMounted = false;
 
@@ -40,6 +44,12 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
 
   // State variable for friend request count
   int _friendRequestCount = 0;
+  
+  // State variables for selected chat (persisted across layout changes)
+  String? _selectedChatId;
+  String? _selectedChatName;
+  String? _selectedChatProfileUrl;
+  bool _selectedChatIsOnline = false;
 
   @override
   void initState() {
@@ -52,7 +62,6 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   @override
   void dispose() {
     _isMounted = false;
-    _pageController.dispose();
     super.dispose();
   }
 
@@ -112,55 +121,101 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     }
   }
 
+  // Safe navigation method — IndexedStack just uses _currentIndex
+  void _safeNavigateToIndex(int index) {
+    if (index < 0 || index >= 4) return;
+    
+    _safeSetState(() {
+      _currentIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        physics:
-            const NeverScrollableScrollPhysics(), // Prevent swiping to avoid partial loading issues
-        onPageChanged: (index) {
-          _safeSetState(() {
-            _currentIndex = index;
-          });
-        },
+    // Define page titles for web layout
+    final pageTitles = [
+      'News Feed',
+      'Chats', 
+      'Stories',
+      'Menu'
+    ];
+
+    // Main content widget — IndexedStack keeps all pages alive.
+    // NewsFeedScreen is const so Flutter reuses the same instance.
+    Widget mainContent = IndexedStack(
+      index: _currentIndex,
+      children: [
+        _buildErrorSafeScreen(const NewsFeedScreen()),
+        _buildErrorSafeScreen(_buildChatsSection()),
+        _buildErrorSafeScreen(_buildStoriesSection()),
+        _buildErrorSafeScreen(_buildMenuSection()),
+      ],
+    );
+
+    // For web platforms with sufficient width, use the three-column layout.
+    // Key fix: ChatLayoutWithMainSidebar is rendered alongside the
+    // IndexedStack via a Stack + Offstage, so the IndexedStack (and its
+    // children like NewsFeedScreen) is NEVER removed from the widget tree.
+    if (PlatformHelper.isWeb && MediaQuery.of(context).size.width >= 1200) {
+      final bool isChatsTab = _currentIndex == 1;
+
+      return Stack(
         children: [
-          // Chats Screen - Wrapped in error boundary
-          _buildErrorSafeScreen(_buildChatsSection()),
+          // Non-chat tabs: WebLayoutWrapper with the IndexedStack inside
+          Offstage(
+            offstage: isChatsTab,
+            child: WebLayoutWrapper(
+              title: pageTitles[_currentIndex],
+              leftSidebar: MessengerLeftSidebar(
+                currentIndex: _currentIndex,
+                onIndexChanged: (index) {
+                  _safeNavigateToIndex(index);
+                },
+              ),
+              rightSidebar: MessengerRightSidebar(
+                currentIndex: _currentIndex,
+              ),
+              child: mainContent,
+            ),
+          ),
 
-          // News Feed Screen
-          _buildErrorSafeScreen(NewsFeedScreen()),
-
-          // Stories Screen
-          _buildErrorSafeScreen(_buildStoriesSection()),
-
-          // Menu Screen
-          _buildErrorSafeScreen(_buildMenuSection()),
+          // Chats tab: the special three-column chat layout
+          Offstage(
+            offstage: !isChatsTab,
+            child: ChatLayoutWithMainSidebar(
+              isDesktop: true,
+              currentIndex: _currentIndex,
+              onIndexChanged: (index) {
+                _safeNavigateToIndex(index);
+              },
+              initialChatId: _selectedChatId,
+              initialChatName: _selectedChatName,
+              initialChatProfileUrl: _selectedChatProfileUrl,
+              initialChatIsOnline: _selectedChatIsOnline,
+              onChatSelected: (chatId, chatName, profileUrl, isOnline) {
+                setState(() {
+                  _selectedChatId = chatId;
+                  _selectedChatName = chatName;
+                  _selectedChatProfileUrl = profileUrl;
+                  _selectedChatIsOnline = isOnline;
+                });
+              },
+            ),
+          ),
         ],
-      ),
+      );
+    }
+
+    // For mobile or small screens, use the traditional layout
+    return Scaffold(
+      body: mainContent,
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
-          // Handle tab switch in a try-catch block
-          try {
-            _safeSetState(() {
-              _currentIndex = index;
-              _pageController.jumpToPage(
-                  index); // Use jumpToPage instead of animate for more stability
-            });
-          } catch (e) {
-            print('❌ Error switching tabs: $e');
-            // Show a simple toast instead of a dialog that might block the UI
-            if (_isMounted && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Error switching tabs. Please try again.')),
-              );
-            }
-          }
+          _safeNavigateToIndex(index);
         },
         backgroundColor: theme.scaffoldBackgroundColor,
         selectedItemColor: colorScheme.primary,
@@ -168,14 +223,14 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline),
-            activeIcon: Icon(Icons.chat_bubble),
-            label: 'Chats',
-          ),
-          BottomNavigationBarItem(
             icon: Icon(Icons.view_list),
             activeIcon: Icon(Icons.view_list),
             label: 'Feed',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.chat_bubble_outline),
+            activeIcon: Icon(Icons.chat_bubble),
+            label: 'Chats',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.auto_stories_outlined),
@@ -194,35 +249,18 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
               onPressed: () {
                 try {
                   if (_currentIndex == 0) {
-                    // Start new chat
-                    _safeNavigate(context, UserListScreen());
+                    // Create new post - use the PostCreateScreen (Feed tab)
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        opaque: false,
+                        pageBuilder: (BuildContext context, _, __) {
+                          return PostCreateScreen();
+                        },
+                      ),
+                    );
                   } else if (_currentIndex == 1) {
-                    // Create new post - use the PostCreateScreen
-                    final currentPage = _pageController.page?.round() ?? 0;
-                    if (currentPage == 1) {
-                      // We're already on the feed page
-                      Navigator.of(context).push(
-                        PageRouteBuilder(
-                          opaque: false,
-                          pageBuilder: (BuildContext context, _, __) {
-                            return PostCreateScreen();
-                          },
-                        ),
-                      );
-                    } else {
-                      // Navigate to feed page first
-                      _pageController.jumpToPage(1);
-                      Future.delayed(Duration(milliseconds: 300), () {
-                        Navigator.of(context).push(
-                          PageRouteBuilder(
-                            opaque: false,
-                            pageBuilder: (BuildContext context, _, __) {
-                              return PostCreateScreen();
-                            },
-                          ),
-                        );
-                      });
-                    }
+                    // Start new chat (Chats tab)
+                    _safeNavigate(context, UserListScreen());
                   } else if (_currentIndex == 2) {
                     // Create new story - navigate to CreateStoryScreen
                     Navigator.push(
@@ -272,13 +310,13 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   }
 
   bool _shouldShowFab() {
-    // Show FAB on Chats tab (desktop/tablet only), Feed tab, and Stories tab
-    return (_currentIndex == 0 && MediaQuery.of(context).size.width >= 768) ||
-        (_currentIndex == 1) ||
+    // Show FAB on Feed tab, Chats tab (desktop/tablet only), and Stories tab
+    return (_currentIndex == 0) ||
+        (_currentIndex == 1 && MediaQuery.of(context).size.width >= 768) ||
         (_currentIndex == 2);
   }
 
-  // Chats Section - Show existing chat list
+  // Chats Section - Show chat list (web layout is handled in build method)
   Widget _buildChatsSection() {
     return ChatListScreen(
       isDesktop: widget.isDesktop,

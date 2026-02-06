@@ -2,22 +2,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/services.dart'; // Added import for HapticFeedback
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/chat_provider.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
-import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'chat_screen.dart';
-import 'package:flutter_chat_app/services/navigator_observer.dart';
-import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter/gestures.dart'
     show DragStartBehavior, PointerDeviceKind;
 
 class ChatListScreen extends StatefulWidget {
   final bool isDesktop;
-  final Function(String chatId, String chatName)? onChatSelected;
+  final Function(String chatId, String chatName, String? profileImageUrl, bool isOnline)? onChatSelected;
   final bool hideAppBar;
 
   const ChatListScreen({
@@ -32,11 +31,7 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen>
-    with TickerProviderStateMixin {
-  User? user;
-  StreamSubscription<QuerySnapshot>? _chatsSubscription;
-  StreamSubscription<User?>? _authSubscription;
-  QuerySnapshot? _lastSnapshot;
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   String? _selectedChatId;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -45,13 +40,12 @@ class _ChatListScreenState extends State<ChatListScreen>
   final List<Animation<double>> _itemAnimations = [];
   bool _isSearchFocused = false;
   final ScrollController _scrollController = ScrollController();
-  
-  // Performance optimizations
-  final Map<String, Map<String, String>> _userInfoCache = {};
-  final Map<String, Future<Map<String, String>>> _pendingUserFetches = {};
-  List<DocumentSnapshot> _cachedFilteredChats = [];
-  String _lastSearchQuery = '';
   Timer? _searchDebouncer;
+  bool _hasPlayedInitialAnimation = false;
+  int _lastAnimatedCount = 0;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -66,33 +60,22 @@ class _ChatListScreenState extends State<ChatListScreen>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
-
-    _authSubscription =
-        FirebaseAuth.instance.authStateChanges().listen((User? currentUser) {
-      setState(() {
-        user = currentUser;
-        if (currentUser != null) {
-          _fetchChatList();
-        }
-      });
-    });
   }
 
   @override
   void dispose() {
-    _chatsSubscription?.cancel();
-    _authSubscription?.cancel();
     _searchController.dispose();
     _animationController.dispose();
     _listAnimationController.dispose();
     _scrollController.dispose();
     _searchDebouncer?.cancel();
-    _userInfoCache.clear();
-    _pendingUserFetches.clear();
     super.dispose();
   }
 
   void _initializeItemAnimations(int itemCount) {
+    // Only replay animation on first load, not on every data update
+    if (_hasPlayedInitialAnimation && itemCount <= _lastAnimatedCount) return;
+
     _itemAnimations.clear();
     for (int i = 0; i < itemCount; i++) {
       final start = i * 0.05;
@@ -107,238 +90,13 @@ class _ChatListScreenState extends State<ChatListScreen>
         ),
       );
     }
+    _lastAnimatedCount = itemCount;
+    _hasPlayedInitialAnimation = true;
     _listAnimationController.forward(from: 0.0);
+    _animationController.forward(from: 0.0);
   }
 
-  void _fetchChatList() async {
-    try {
-      await _chatsSubscription?.cancel();
 
-      final currentUser = FirebaseAuth.instance.currentUser;
-      if (currentUser == null) {
-        setState(() {
-          _lastSnapshot = null;
-        });
-        return;
-      }
-
-      if (PlatformHelper.isWindows &&
-          !FirebaseConfig.isFirebaseEnabledOnWindows) {
-        setState(() {
-          _lastSnapshot = null;
-        });
-        return;
-      }
-
-      try {
-        _chatsSubscription = FirebaseFirestore.instance
-            .collection('chats')
-            .where('userIds', arrayContains: currentUser.uid)
-            .orderBy('createdAt', descending: true)
-            .snapshots()
-            .listen((snapshot) async {
-          final filteredDocs = snapshot.docs.where((doc) {
-            Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-            return data['isDeleted'] != true;
-          }).toList();
-
-          // Pre-fetch user info for all chats in batch
-          _prefetchUserInfo(filteredDocs);
-
-          if (mounted) {
-            setState(() {
-              _lastSnapshot = snapshot;
-              _cachedFilteredChats.clear(); // Clear cache when data changes
-              _initializeItemAnimations(filteredDocs.length);
-              _animationController.reset();
-              _animationController.forward();
-            });
-          }
-        }, onError: (error) {
-          if (error.toString().contains('requires an index')) {
-            print(
-                "Index error detected. Please deploy the index configured in firestore.indexes.json");
-          }
-
-          if (error.toString().contains('Unsupported operation')) {
-            setState(() {
-              _lastSnapshot = null;
-            });
-          }
-        });
-      } catch (e) {
-        setState(() {
-          _lastSnapshot = null;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _lastSnapshot = null;
-      });
-    }
-  }
-
-  Future<Map<String, String>> fetchChatPartnerInfo(List<String> userIds) async {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      return {"name": "Not logged in", "profileImageUrl": ""};
-    }
-
-    String currentUserId = currentUser.uid;
-    String otherUserId = userIds.firstWhere(
-      (id) => id != currentUserId,
-      orElse: () => "Unknown",
-    );
-
-    if (otherUserId == "Unknown") {
-      return {"name": "Unknown", "profileImageUrl": ""};
-    }
-
-    // Check cache first
-    if (_userInfoCache.containsKey(otherUserId)) {
-      return _userInfoCache[otherUserId]!;
-    }
-
-    // Check if we're already fetching this user
-    if (_pendingUserFetches.containsKey(otherUserId)) {
-      return _pendingUserFetches[otherUserId]!;
-    }
-
-    // Create the fetch future and cache it
-    final fetchFuture = _fetchUserInfo(otherUserId);
-    _pendingUserFetches[otherUserId] = fetchFuture;
-
-    try {
-      final result = await fetchFuture;
-      _userInfoCache[otherUserId] = result;
-      _pendingUserFetches.remove(otherUserId);
-      return result;
-    } catch (e) {
-      _pendingUserFetches.remove(otherUserId);
-      rethrow;
-    }
-  }
-
-  Future<Map<String, String>> _fetchUserInfo(String userId) async {
-    try {
-      var userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      if (userDoc.exists) {
-        return {
-          "name": userDoc.data()?['username'] ?? 'Unknown',
-          "profileImageUrl": userDoc.data()?['profileImageUrl'] ?? ''
-        };
-      }
-    } catch (e) {
-      debugPrint("Error fetching user: $e");
-    }
-    return {"name": "Unknown", "profileImageUrl": ""};
-  }
-
-  // Batch fetch multiple users at once for better performance
-  Future<Map<String, Map<String, String>>> batchFetchUsers(Set<String> userIds) async {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) return {};
-
-    // Filter out current user and already cached users
-    final uncachedUserIds = userIds
-        .where((id) => id != currentUser.uid && !_userInfoCache.containsKey(id))
-        .toList();
-
-    if (uncachedUserIds.isEmpty) {
-      // Return cached results
-      final result = <String, Map<String, String>>{};
-      for (final id in userIds) {
-        if (id != currentUser.uid && _userInfoCache.containsKey(id)) {
-          result[id] = _userInfoCache[id]!;
-        }
-      }
-      return result;
-    }
-
-    try {
-      // Batch fetch users in chunks to avoid large queries
-      const chunkSize = 10;
-      final results = <String, Map<String, String>>{};
-
-      for (int i = 0; i < uncachedUserIds.length; i += chunkSize) {
-        final chunk = uncachedUserIds.skip(i).take(chunkSize).toList();
-        
-        // Filter out empty strings to avoid Firestore query errors
-        final validChunk = chunk.where((id) => id.isNotEmpty).toList();
-        
-        if (validChunk.isEmpty) continue;
-        
-        final querySnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .where(FieldPath.documentId, whereIn: validChunk)
-            .get();
-
-        for (final doc in querySnapshot.docs) {
-          final userInfo = {
-            "name": (doc.data()['username'] ?? 'Unknown') as String,
-            "profileImageUrl": (doc.data()['profileImageUrl'] ?? '') as String
-          };
-          results[doc.id] = userInfo;
-          _userInfoCache[doc.id] = userInfo;
-        }
-
-        // Handle users not found in the query
-        for (final userId in chunk) {
-          if (!results.containsKey(userId)) {
-            final defaultInfo = {"name": "Unknown", "profileImageUrl": ""};
-            results[userId] = defaultInfo;
-            _userInfoCache[userId] = defaultInfo;
-          }
-        }
-      }
-
-      // Add already cached results
-      for (final id in userIds) {
-        if (id != currentUser.uid && _userInfoCache.containsKey(id) && !results.containsKey(id)) {
-          results[id] = _userInfoCache[id]!;
-        }
-      }
-
-      return results;
-    } catch (e) {
-      debugPrint("Error batch fetching users: $e");
-      return {};
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    if (!widget.isDesktop) {
-      try {
-        final navigatorObservers = Navigator.of(context).widget.observers;
-        MyNavigatorObserver? observer;
-
-        for (var obs in navigatorObservers) {
-          if (obs is MyNavigatorObserver) {
-            observer = obs;
-            break;
-          }
-        }
-
-        if (observer != null) {
-          observer.setCallback(() {
-            if (mounted) {
-              setState(() {
-                _fetchChatList();
-              });
-            }
-          });
-        }
-      } catch (e) {
-        print("Error registering navigator observer: $e");
-      }
-    }
-  }
 
   Future<void> signOutUser() async {
     try {
@@ -366,7 +124,6 @@ class _ChatListScreenState extends State<ChatListScreen>
 
       if (!confirm) return;
 
-      await _chatsSubscription?.cancel();
       await FirebaseAuth.instance.signOut();
     } catch (e) {
       if (mounted) {
@@ -381,104 +138,36 @@ class _ChatListScreenState extends State<ChatListScreen>
     }
   }
 
-  List<DocumentSnapshot> _getFilteredChats() {
-    if (_lastSnapshot == null) return [];
-
-    // Use cached results if search query hasn't changed
-    if (_searchQuery == _lastSearchQuery && _cachedFilteredChats.isNotEmpty) {
-      return _cachedFilteredChats;
-    }
-
-    List<DocumentSnapshot> filtered;
-    if (_searchQuery.isEmpty) {
-      filtered = _lastSnapshot!.docs.where((doc) {
-        var data = doc.data() as Map<String, dynamic>;
-        return data['isDeleted'] != true;
-      }).toList();
-    } else {
-      final query = _searchQuery.toLowerCase();
-      filtered = _lastSnapshot!.docs.where((doc) {
-        var data = doc.data() as Map<String, dynamic>;
-        if (data['isDeleted'] == true) return false;
-        
-        String lastMessage = (data['lastMessage'] ?? '').toString().toLowerCase();
-        
-        // Also search in cached user names
-        final userIds = List<String>.from(data['userIds'] ?? []);
-        final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-        final otherUserId = userIds.firstWhere(
-          (id) => id != currentUserId,
-          orElse: () => '',
-        );
-        
-        String userName = '';
-        if (otherUserId.isNotEmpty && _userInfoCache.containsKey(otherUserId)) {
-          userName = _userInfoCache[otherUserId]!['name']?.toLowerCase() ?? '';
-        }
-        
-        return lastMessage.contains(query) || userName.contains(query);
-      }).toList();
-    }
-
-    // Cache the results
-    _cachedFilteredChats = filtered;
-    _lastSearchQuery = _searchQuery;
-    
-    return filtered;
-  }
-
   void _onSearchChanged(String value) {
     _searchDebouncer?.cancel();
     _searchDebouncer = Timer(const Duration(milliseconds: 300), () {
       if (mounted) {
         setState(() {
           _searchQuery = value;
-          _cachedFilteredChats.clear(); // Clear cache when search changes
         });
       }
     });
   }
 
-  // Pre-fetch user information for all chats to improve performance
-  void _prefetchUserInfo(List<DocumentSnapshot> chats) {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUserId == null) return;
-
-    // Collect all unique user IDs from chats
-    final userIds = <String>{};
-    for (final chat in chats) {
-      final data = chat.data() as Map<String, dynamic>;
-      final chatUserIds = List<String>.from(data['userIds'] ?? []);
-      userIds.addAll(chatUserIds.where((id) => id != currentUserId));
-    }
-
-    // Batch fetch users that aren't already cached
-    if (userIds.isNotEmpty) {
-      batchFetchUsers(userIds).catchError((error) {
-        debugPrint("Error prefetching user info: $error");
-        return <String, Map<String, String>>{};
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
+
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final currentUser = FirebaseAuth.instance.currentUser;
 
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(),
-            ),
-          );
+    return Consumer<ChatProvider>(
+      builder: (context, chatProvider, _) {
+
+        // Run item animation when chat list count changes
+        final chatDocs = chatProvider.getFilteredChats(_searchQuery);
+        if (chatDocs.isNotEmpty) {
+          // Schedule animation after build
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _initializeItemAnimations(chatDocs.length);
+          });
         }
-
-        final User? currentUser = snapshot.data;
-        user = currentUser;
 
         if (currentUser == null) {
           return Scaffold(
@@ -549,17 +238,29 @@ class _ChatListScreenState extends State<ChatListScreen>
           );
         }
 
-        final filteredChats = _getFilteredChats();
+        final filteredChats = chatDocs;
 
         return Scaffold(
+          backgroundColor: Theme.of(context).brightness == Brightness.dark
+              ? colorScheme.surface
+              : const Color(0xFFFAFAFA),
           appBar: widget.hideAppBar
               ? null
               : AppBar(
+                  backgroundColor: Theme.of(context).brightness == Brightness.dark
+                      ? colorScheme.surface
+                      : Colors.white,
+                  elevation: 0,
+                  scrolledUnderElevation: 0.5,
+                  surfaceTintColor: Colors.transparent,
                   title: Text(
                     widget.isDesktop ? 'Conversations' : 'Chats',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 24,
+                      color: colorScheme.onSurface,
+                    ),
                   ),
-                  elevation: 2,
                   actions: [
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
@@ -593,7 +294,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                               MaterialPageRoute(
                                   builder: (context) =>
                                       PendingRequestsScreen()),
-                            ).then((_) => _fetchChatList());
+                            );
                             break;
                           case 'help':
                             break;
@@ -786,30 +487,45 @@ class _ChatListScreenState extends State<ChatListScreen>
               : null,
           body: Column(
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: _isSearchFocused ? 12.0 : 16.0,
-                ),
+              // Search bar with improved styling
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                 decoration: BoxDecoration(
-                  color: _isSearchFocused
-                      ? colorScheme.primaryContainer.withOpacity(0.1)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? colorScheme.surface
+                      : Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'Search conversations...',
+                    hintStyle: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.4),
+                      fontSize: 15,
+                    ),
                     prefixIcon: Icon(
-                      Icons.search,
-                      color: _isSearchFocused ? colorScheme.primary : Colors.grey,
+                      Icons.search_rounded,
+                      color: _isSearchFocused
+                          ? colorScheme.primary
+                          : colorScheme.onSurface.withOpacity(0.4),
+                      size: 22,
                     ),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
-                            icon: const Icon(Icons.clear),
+                            icon: Icon(
+                              Icons.close_rounded,
+                              color: colorScheme.onSurface.withOpacity(0.5),
+                              size: 20,
+                            ),
                             onPressed: () {
+                              HapticFeedback.lightImpact();
                               setState(() {
                                 _searchController.clear();
                                 _searchQuery = '';
@@ -818,16 +534,17 @@ class _ChatListScreenState extends State<ChatListScreen>
                           )
                         : null,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(50),
+                      borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide.none,
                     ),
                     filled: true,
-                    fillColor: Colors.grey.withOpacity(0.1),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    fillColor: Theme.of(context).brightness == Brightness.dark
+                        ? colorScheme.surfaceContainerHighest.withOpacity(0.3)
+                        : Colors.grey.shade100,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(50),
-                      borderSide:
-                          BorderSide(color: colorScheme.primary, width: 1),
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: colorScheme.primary.withOpacity(0.5), width: 1.5),
                     ),
                   ),
                   onChanged: (value) {
@@ -847,7 +564,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                 ),
               ),
               Expanded(
-                child: _lastSnapshot == null
+                child: chatProvider.isLoading
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -975,22 +692,33 @@ class _ChatListScreenState extends State<ChatListScreen>
             ],
           ),
           floatingActionButton: _searchQuery.isEmpty
-              ? FloatingActionButton.extended(
-                  onPressed: () {
-                    HapticFeedback.mediumImpact();
-
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => UserListScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.chat),
-                  label: const Text('New Chat'),
-                  tooltip: 'Start a new conversation',
-                  elevation: 4,
-                  highlightElevation: 8,
-                  backgroundColor: colorScheme.primary,
-                  foregroundColor: Colors.white,
+              ? Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.primary.withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: FloatingActionButton(
+                    onPressed: () {
+                      HapticFeedback.mediumImpact();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => UserListScreen()),
+                      );
+                    },
+                    tooltip: 'Start a new conversation',
+                    elevation: 0,
+                    backgroundColor: colorScheme.primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(Icons.edit_rounded, color: Colors.white),
+                  ),
                 )
               : null,
         );
@@ -1014,18 +742,17 @@ class _ChatListScreenState extends State<ChatListScreen>
       orElse: () => '',
     );
 
-    // Get user info from cache or show shimmer while loading
+    // Get user info from provider cache or show shimmer while loading
+    final chatProvider = context.read<ChatProvider>();
     Map<String, String>? userInfo;
-    if (otherUserId.isNotEmpty && _userInfoCache.containsKey(otherUserId)) {
-      userInfo = _userInfoCache[otherUserId];
+    if (otherUserId.isNotEmpty) {
+      userInfo = chatProvider.getCachedUserInfo(otherUserId);
     }
 
     if (userInfo == null) {
       // Start loading user info if not in cache
       if (otherUserId.isNotEmpty) {
-        fetchChatPartnerInfo(userIds).then((_) {
-          if (mounted) setState(() {});
-        });
+        chatProvider.fetchUserInfo(otherUserId);
       }
       return _buildChatShimmer();
     }
@@ -1034,9 +761,9 @@ class _ChatListScreenState extends State<ChatListScreen>
     final profileImageUrl = userInfo['profileImageUrl'] ?? '';
     
     bool isRead = false;
-    if (user != null && chatData['lastMessageReadBy'] != null) {
+    if (chatData['lastMessageReadBy'] != null) {
       isRead = (chatData['lastMessageReadBy'] as List<dynamic>)
-          .contains(user!.uid);
+          .contains(currentUserId);
     }
 
     bool isSelected = widget.isDesktop && chatId == _selectedChatId;
@@ -1114,98 +841,164 @@ class _ChatListScreenState extends State<ChatListScreen>
             parent: _animationController,
             curve: Curves.easeOutCubic,
           )),
-          child: Card(
-            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            elevation: isSelected ? 4 : 1,
-            shadowColor: isSelected
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-                : Colors.black.withOpacity(0.1),
-            shape: RoundedRectangleBorder(
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 3, horizontal: 10),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? Theme.of(context).colorScheme.primary.withOpacity(0.08)
+                  : Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(16),
-              side: isSelected
-                  ? BorderSide(
-                      color: Theme.of(context).colorScheme.primary,
-                      width: 2,
+              border: isSelected
+                  ? Border.all(
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+                      width: 1.5,
                     )
-                  : BorderSide.none,
+                  : null,
+              boxShadow: [
+                BoxShadow(
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+                      : Colors.black.withOpacity(0.04),
+                  blurRadius: isSelected ? 12 : 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              leading: CircleAvatar(
-                radius: 28,
-                backgroundImage: profileImageUrl.isNotEmpty
-                    ? NetworkImage(profileImageUrl)
-                    : null,
-                child: profileImageUrl.isEmpty
-                    ? Text(
-                        chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      )
-                    : null,
-              ),
-              title: Text(
-                chatName,
-                style: TextStyle(
-                  fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                chatData['lastMessage'] ?? 'No messages yet',
-                style: TextStyle(
-                  color: isRead ? Colors.grey[600] : Colors.grey[800],
-                  fontWeight: isRead ? FontWeight.normal : FontWeight.w500,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    timeString,
-                    style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 12,
-                    ),
-                  ),
-                  if (!isRead) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primary,
-                        shape: BoxShape.circle,
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                splashColor: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+                highlightColor: Theme.of(context).colorScheme.primary.withOpacity(0.04),
+                onTap: () {
+                  HapticFeedback.lightImpact();
+
+                  if (widget.isDesktop) {
+                    setState(() {
+                      _selectedChatId = chatId;
+                    });
+
+                    if (widget.onChatSelected != null) {
+                      widget.onChatSelected!(
+                        chatId,
+                        chatName,
+                        profileImageUrl.isNotEmpty ? profileImageUrl : null,
+                        false,
+                      );
+                    }
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ChatScreen(
+                          chatId: chatId,
+                          chatPersonName: chatName,
+                          chatPersonAvatarUrl: profileImageUrl.isNotEmpty ? profileImageUrl : null,
+                        ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
-              onTap: () {
-                HapticFeedback.lightImpact();
-
-                if (widget.isDesktop) {
-                  setState(() {
-                    _selectedChatId = chatId;
-                  });
-
-                  if (widget.onChatSelected != null) {
-                    widget.onChatSelected!(chatId, chatName);
+                    );
                   }
-                } else {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ChatScreen(
-                        chatId: chatId,
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(
+                    children: [
+                      // Avatar with subtle background
+                      Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5),
+                        ),
+                        child: CircleAvatar(
+                          radius: 26,
+                          backgroundColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.6),
+                          backgroundImage: profileImageUrl.isNotEmpty
+                              ? NetworkImage(profileImageUrl)
+                              : null,
+                          child: profileImageUrl.isEmpty
+                              ? Text(
+                                  chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                  ),
+                                )
+                              : null,
+                        ),
                       ),
-                    ),
-                  ).then((_) => _fetchChatList());
-                }
-              },
+                      const SizedBox(width: 14),
+                      // Name + message
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              chatName,
+                              style: TextStyle(
+                                fontWeight: isRead ? FontWeight.w400 : FontWeight.w600,
+                                fontSize: 15.5,
+                                letterSpacing: 0.1,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              chatData['lastMessage'] ?? 'No messages yet',
+                              style: TextStyle(
+                                color: isRead
+                                    ? Theme.of(context).colorScheme.onSurface.withOpacity(0.5)
+                                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
+                                fontWeight: isRead ? FontWeight.w400 : FontWeight.w500,
+                                fontSize: 13.5,
+                                height: 1.3,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Time + unread dot
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            timeString,
+                            style: TextStyle(
+                              color: !isRead
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                              fontSize: 12,
+                              fontWeight: !isRead ? FontWeight.w600 : FontWeight.w400,
+                            ),
+                          ),
+                          if (!isRead) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Theme.of(context).colorScheme.primary,
+                                    Theme.of(context).colorScheme.primary.withOpacity(0.7),
+                                  ],
+                                ),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -1288,8 +1081,6 @@ class _ChatListScreenState extends State<ChatListScreen>
       batch.delete(FirebaseFirestore.instance.collection('chats').doc(chatId));
 
       await batch.commit();
-
-      _fetchChatList();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
