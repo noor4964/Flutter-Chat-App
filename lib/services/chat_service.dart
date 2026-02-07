@@ -1034,4 +1034,131 @@ class ChatService {
       return [];
     }
   }
+
+  // Delete a message for the current user only (hides it from their view)
+  Future<void> deleteMessageForMe(
+    String chatId,
+    String messageId,
+    String userId,
+  ) async {
+    if (_isWindowsWithoutFirebase) return;
+
+    try {
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .update({
+        'deletedFor': FieldValue.arrayUnion([userId]),
+      });
+      print('Message $messageId deleted for user $userId');
+    } catch (e) {
+      print('Error deleting message for me: $e');
+      rethrow;
+    }
+  }
+
+  // Delete a message for everyone (replaces content with deleted placeholder)
+  Future<void> deleteMessageForEveryone(
+    String chatId,
+    String messageId,
+    String userId,
+  ) async {
+    if (_isWindowsWithoutFirebase) return;
+
+    try {
+      final messageRef = _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId);
+
+      // Verify the sender is the one deleting
+      final messageDoc = await messageRef.get();
+      if (!messageDoc.exists) throw Exception('Message not found');
+
+      final data = messageDoc.data() as Map<String, dynamic>;
+      if (data['senderId'] != userId) {
+        throw Exception('Only the sender can delete a message for everyone');
+      }
+
+      // Update the message
+      await messageRef.update({
+        'isDeleted': true,
+        'deletedBy': userId,
+        'content': '',
+        'reactions': [],
+      });
+
+      // If this was the last message in the chat, update the chat preview
+      final chatRef = _firestore.collection('chats').doc(chatId);
+      final chatDoc = await chatRef.get();
+      if (chatDoc.exists) {
+        final chatData = chatDoc.data() as Map<String, dynamic>;
+        final lastMessageId = chatData['lastMessageId'];
+        if (lastMessageId == messageId) {
+          await chatRef.update({
+            'lastMessage': 'This message was deleted',
+          });
+        }
+      }
+
+      print('Message $messageId deleted for everyone by $userId');
+    } catch (e) {
+      print('Error deleting message for everyone: $e');
+      rethrow;
+    }
+  }
+
+  // ─── Block User Methods ──────────────────────────────
+
+  /// Block a user. Adds [blockedUserId] to the current user's blockedUsers array.
+  Future<void> blockUser(String currentUserId, String blockedUserId) async {
+    if (_isWindowsWithoutFirebase) return;
+    try {
+      await _firestore.collection('users').doc(currentUserId).update({
+        'blockedUsers': FieldValue.arrayUnion([blockedUserId]),
+      });
+    } catch (e) {
+      print('Error blocking user: $e');
+      rethrow;
+    }
+  }
+
+  /// Unblock a user. Removes [blockedUserId] from the current user's blockedUsers array.
+  Future<void> unblockUser(String currentUserId, String blockedUserId) async {
+    if (_isWindowsWithoutFirebase) return;
+    try {
+      await _firestore.collection('users').doc(currentUserId).update({
+        'blockedUsers': FieldValue.arrayRemove([blockedUserId]),
+      });
+    } catch (e) {
+      print('Error unblocking user: $e');
+      rethrow;
+    }
+  }
+
+  /// Returns a real-time stream of block status between two users.
+  /// Emits a record with two booleans: (blockedByMe, blockedByOther).
+  Stream<({bool blockedByMe, bool blockedByOther})> blockStatusStream(
+      String currentUserId, String otherUserId) {
+    final myDoc = _firestore.collection('users').doc(currentUserId).snapshots();
+
+    return myDoc.asyncMap((mySnap) async {
+      final myData = mySnap.data() ?? {};
+      final myBlockedList = List<String>.from(myData['blockedUsers'] ?? []);
+      final blockedByMe = myBlockedList.contains(otherUserId);
+
+      // Also check if the other user blocked me
+      final otherSnap =
+          await _firestore.collection('users').doc(otherUserId).get();
+      final otherData = otherSnap.data() ?? {};
+      final otherBlockedList =
+          List<String>.from(otherData['blockedUsers'] ?? []);
+      final blockedByOther = otherBlockedList.contains(currentUserId);
+
+      return (blockedByMe: blockedByMe, blockedByOther: blockedByOther);
+    });
+  }
 }

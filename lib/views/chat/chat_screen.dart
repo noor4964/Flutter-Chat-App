@@ -98,6 +98,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   double _lastKeyboardHeight = 0.0;
   bool _isKeyboardAnimating = false;
 
+  // Block state
+  bool _isBlocked = false;       // true if current user blocked the other person
+  bool _isBlockedByOther = false; // true if the other person blocked current user
+  StreamSubscription? _blockStatusSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -152,6 +157,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     } else if (!hasText && !_sendButtonAnimationController.isDismissed) {
       _sendButtonAnimationController.reverse();
     }
+
+    // Rebuild so the send button onPressed condition updates
+    setState(() {});
 
     // Update typing indicator in Firestore
     if (user != null) {
@@ -234,6 +242,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     // Cancel online status listener
     _onlineStatusSubscription?.cancel();
 
+    // Cancel block status listener
+    _blockStatusSubscription?.cancel();
+
     super.dispose();
   }
 
@@ -314,6 +325,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
             // Start real-time online status listener
             _listenToOnlineStatus(chatPersonId);
+
+            // Start block status listener
+            _listenToBlockStatus(chatPersonId);
           }
         }
       }
@@ -329,6 +343,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       if (mounted && isTyping != _isTyping) {
         setState(() {
           _isTyping = isTyping;
+        });
+      }
+    });
+  }
+
+  void _listenToBlockStatus(String chatPersonId) {
+    if (user == null) return;
+    _blockStatusSubscription?.cancel();
+    _blockStatusSubscription = _chatService
+        .blockStatusStream(user!.uid, chatPersonId)
+        .listen((status) {
+      if (mounted) {
+        setState(() {
+          _isBlocked = status.blockedByMe;
+          _isBlockedByOther = status.blockedByOther;
         });
       }
     });
@@ -360,6 +389,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
               // Start real-time online status listener
               _listenToOnlineStatus(userId);
+
+              // Start block status listener
+              _listenToBlockStatus(userId);
             }
           }
         }
@@ -669,7 +701,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                   // Show shared media
                   break;
                 case 'block':
-                  // Block user
+                  if (_isBlocked) {
+                    _unblockUser();
+                  } else {
+                    _showBlockConfirmation();
+                  }
                   break;
                 case 'clear':
                   // Clear chat
@@ -704,11 +740,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                   dense: true,
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'block',
                 child: ListTile(
-                  leading: Icon(Icons.block, color: Colors.red),
-                  title: Text('Block', style: TextStyle(color: Colors.red)),
+                  leading: Icon(
+                    _isBlocked ? Icons.check_circle_outline : Icons.block,
+                    color: _isBlocked ? Colors.green : Colors.red,
+                  ),
+                  title: Text(
+                    _isBlocked ? 'Unblock' : 'Block',
+                    style: TextStyle(
+                      color: _isBlocked ? Colors.green : Colors.red,
+                    ),
+                  ),
                   contentPadding: EdgeInsets.zero,
                   dense: true,
                 ),
@@ -826,6 +870,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                           // If we have data, use it
                           if (snapshot.hasData) {
                             var messages = snapshot.data!;
+
+                            // Filter out messages deleted for the current user
+                            final currentUid =
+                                FirebaseAuth.instance.currentUser?.uid ?? '';
+                            messages = messages
+                                .where((m) =>
+                                    !m.deletedFor.contains(currentUid))
+                                .toList();
 
                             // Group messages by date (memoized — skips if unchanged)
                             _groupMessagesByDate(messages);
@@ -980,14 +1032,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                                         : maxBubbleWidth -
                                                             40, // Reduce width for recipient's messages to account for avatar
                                                   ),
-                                                  child: GestureDetector(
-                                                    onLongPress: () {
-                                                      // Show message options with haptic feedback (skip on web)
-                                                      if (!kIsWeb) HapticFeedback.mediumImpact();
-                                                      _showMessageOptions(
-                                                          message);
-                                                    },
-                                                    child: AnimatedContainer(
+                                                  child: AnimatedContainer(
                                                       duration: const Duration(
                                                           milliseconds: 200),
                                                       margin:
@@ -1004,17 +1049,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                                         messageData: _getMessageData(message),
                                                         primaryColor: Theme.of(context).primaryColor,
                                                         borderRadius: const BorderRadius.all(Radius.circular(18)),
-                                                        reactions: message.reactions,
+                                                        reactions: message.isDeleted ? const [] : message.reactions,
                                                         currentUserId: FirebaseAuth.instance.currentUser?.uid ?? '',
-                                                        onReactionAdd: (emoji) {
+                                                        isDeleted: message.isDeleted,
+                                                        deletedBy: message.deletedBy,
+                                                        onReactionAdd: message.isDeleted ? null : (emoji) {
                                                           _toggleMessageReaction(message.id, emoji);
                                                         },
-                                                        onLongPress: () {
-                                                          _showReactionPicker(message);
+                                                        onLongPress: message.isDeleted ? null : () {
+                                                          if (!kIsWeb) HapticFeedback.mediumImpact();
+                                                          _showMessageOptions(message);
                                                         },
                                                       ),
                                                     ),
-                                                  ),
                                                 ),
                                               ),
                                             ],
@@ -1035,7 +1082,49 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                 ),
               ),
 
-              // Message input field
+              // Message input field (or blocked banner)
+              if (_isBlocked || _isBlockedByOther)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+                  decoration: BoxDecoration(
+                    color: theme.brightness == Brightness.dark
+                        ? colorScheme.surface
+                        : Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        offset: const Offset(0, -1),
+                        blurRadius: 10,
+                        color: Colors.black.withOpacity(0.04),
+                      ),
+                    ],
+                  ),
+                  child: SafeArea(
+                    child: _isBlocked
+                        ? GestureDetector(
+                            onTap: _unblockUser,
+                            child: Center(
+                              child: Text(
+                                'You blocked this user. Tap to unblock.',
+                                style: TextStyle(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              "You can't send messages to this user.",
+                              style: TextStyle(
+                                color: colorScheme.onSurface.withOpacity(0.5),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                  ),
+                )
+              else
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8.0),
@@ -1057,14 +1146,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                       // Unified capsule input bar
                       Container(
                         decoration: BoxDecoration(
-                          color: theme.brightness == Brightness.dark
-                              ? colorScheme.surfaceContainerHighest.withOpacity(0.5)
-                              : const Color(0xFFF5F5F7),
+                          color: colorScheme.surfaceVariant,
                           borderRadius: BorderRadius.circular(28),
                           border: Border.all(
-                            color: theme.brightness == Brightness.dark
-                                ? Colors.white.withOpacity(0.06)
-                                : Colors.black.withOpacity(0.04),
+                            color: colorScheme.outline.withOpacity(0.3),
                           ),
                         ),
                         child: Row(
@@ -1126,9 +1211,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                   style: TextStyle(
                                     fontSize: 15.5,
                                     height: 1.35,
-                                    color: theme.brightness == Brightness.dark
-                                        ? Colors.white
-                                        : const Color(0xFF1A1A1A),
+                                    color: colorScheme.onSurface,
                                   ),
                                   onTap: () {
                                     if (_isEmojiPickerOpen) {
@@ -1156,7 +1239,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                         ? Icons.keyboard_rounded
                                         : Icons.emoji_emotions_outlined,
                                     color: _isEmojiPickerOpen
-                                        ? Colors.amber
+                                        ? colorScheme.primary
                                         : colorScheme.onSurface.withOpacity(0.4),
                                     size: 22,
                                   ),
@@ -1174,7 +1257,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                 ),
                               ),
                             ),
-                            // Gradient send button
+                            // Send button
                             Padding(
                               padding: const EdgeInsets.only(right: 5, bottom: 5),
                               child: AnimatedScale(
@@ -1195,10 +1278,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                             ]
                                           : [
                                               colorScheme.primary,
-                                              HSLColor.fromColor(colorScheme.primary)
-                                                  .withHue((HSLColor.fromColor(colorScheme.primary).hue + 18) % 360)
-                                                  .withLightness((HSLColor.fromColor(colorScheme.primary).lightness - 0.06).clamp(0.0, 1.0))
-                                                  .toColor(),
+                                              Color.lerp(colorScheme.primary, Colors.black, 0.15)!,
                                             ],
                                     ),
                                     shape: BoxShape.circle,
@@ -1313,7 +1393,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                               ),
                               skinToneConfig: SkinToneConfig(
                                 enabled: true,
-                                dialogBackgroundColor: Colors.white,
+                                dialogBackgroundColor: colorScheme.surface,
                               ),
                               bottomActionBarConfig: BottomActionBarConfig(
                                 backgroundColor:
@@ -1396,6 +1476,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   }
 
   void _showMessageOptions(Message message) {
+    // Don't show options for deleted messages
+    if (message.isDeleted) return;
+
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
@@ -1419,16 +1502,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                   // Edit message functionality
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title:
-                    const Text('Delete', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Delete message functionality
-                },
-              ),
             ],
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title:
+                  const Text('Delete', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                _showDeleteDialog(message);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.content_copy),
               title: const Text('Copy'),
@@ -1454,6 +1537,143 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           ],
         ),
       ),
+    );
+  }
+
+  void _showBlockConfirmation() {
+    final personName = _chatPersonName ?? 'this user';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Block $personName?'),
+        content: const Text(
+          'Blocked contacts will no longer be able to send you messages. You can unblock them at any time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _blockUser();
+            },
+            child: const Text('Block', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _blockUser() async {
+    if (user == null || _chatPersonId == null) return;
+    try {
+      await _chatService.blockUser(user!.uid, _chatPersonId!);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to block user')),
+        );
+      }
+    }
+  }
+
+  Future<void> _unblockUser() async {
+    if (user == null || _chatPersonId == null) return;
+    try {
+      await _chatService.unblockUser(user!.uid, _chatPersonId!);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to unblock user')),
+        );
+      }
+    }
+  }
+
+  void _showDeleteDialog(Message message) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Allow "Delete for everyone" only if it's the sender's message and within 1 hour
+    final bool canDeleteForEveryone = message.isMe &&
+        DateTime.now().difference(message.timestamp).inHours < 1;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Delete message'),
+          content: const Text(
+              'Who do you want to delete this message for?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                try {
+                  await _chatService.deleteMessageForMe(
+                    widget.chatId,
+                    message.id,
+                    user.uid,
+                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Message deleted'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to delete: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Delete for me'),
+            ),
+            if (canDeleteForEveryone)
+              TextButton(
+                onPressed: () async {
+                  Navigator.of(ctx).pop();
+                  try {
+                    await _chatService.deleteMessageForEveryone(
+                      widget.chatId,
+                      message.id,
+                      user.uid,
+                    );
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Message deleted for everyone'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to delete: $e')),
+                      );
+                    }
+                  }
+                },
+                child: Text(
+                  'Delete for everyone',
+                  style: TextStyle(color: colorScheme.error),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

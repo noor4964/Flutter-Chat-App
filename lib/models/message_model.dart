@@ -13,6 +13,9 @@ class Message {
   final DateTime?
       readTimestamp; // Added readTimestamp to track when message was read
   final List<MessageReaction> reactions; // Added reactions field
+  final bool isDeleted; // true if deleted for everyone
+  final String? deletedBy; // userId who deleted for everyone
+  final List<String> deletedFor; // userIds who deleted for themselves
 
   Message({
     required this.id,
@@ -21,10 +24,13 @@ class Message {
     required this.timestamp,
     required this.isMe,
     required this.isRead,
-    this.readBy, // Added readBy parameter
+    this.readBy,
     this.type = 'text',
-    this.readTimestamp, // Added readTimestamp parameter
-    this.reactions = const [], // Added reactions parameter
+    this.readTimestamp,
+    this.reactions = const [],
+    this.isDeleted = false,
+    this.deletedBy,
+    this.deletedFor = const [],
   });
 
   factory Message.fromJson(Map<String, dynamic> json, String currentUserId) {
@@ -102,7 +108,10 @@ class Message {
       reactions: (json['reactions'] as List<dynamic>?)
               ?.map((r) => MessageReaction.fromJson(r as Map<String, dynamic>))
               .toList() ??
-          [], // Parse reactions field
+          [],
+      isDeleted: json['isDeleted'] ?? false,
+      deletedBy: json['deletedBy'],
+      deletedFor: List<String>.from(json['deletedFor'] ?? []),
     );
   }
 

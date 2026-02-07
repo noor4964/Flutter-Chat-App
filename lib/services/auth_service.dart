@@ -53,7 +53,7 @@ class AuthService {
       // Force signout before attempting signin to clear any stale state
       if (_auth.currentUser != null) {
         print(
-            '⚠️ Found existing logged in user, signing out first to avoid state conflicts');
+            '⚠️ Warning: A user is already signed in, signing out before new sign in');
         await _auth.signOut();
       }
 

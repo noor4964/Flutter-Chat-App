@@ -61,6 +61,8 @@ class ModernMessageBubble extends StatelessWidget {
   final Function(String emoji)? onReactionAdd;
   final VoidCallback? onLongPress;
   final String currentUserId;
+  final bool isDeleted;
+  final String? deletedBy;
 
   const ModernMessageBubble({
     Key? key,
@@ -78,6 +80,8 @@ class ModernMessageBubble extends StatelessWidget {
     this.onReactionAdd,
     this.onLongPress,
     required this.currentUserId,
+    this.isDeleted = false,
+    this.deletedBy,
   }) : super(key: key);
 
   @override
@@ -88,6 +92,11 @@ class ModernMessageBubble extends StatelessWidget {
     final colors = isMe
         ? _BubbleColors.sender(primaryColor, bubbleStyle)
         : _BubbleColors.receiver(isDarkMode, bubbleStyle);
+
+    // Deleted message: show placeholder instead of content
+    if (isDeleted) {
+      return _buildDeletedBubble(context, colors, isDarkMode);
+    }
 
     // Build message content based on type
     Widget messageContent;
@@ -838,6 +847,56 @@ class ModernMessageBubble extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────
+  //  Deleted message bubble
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildDeletedBubble(
+      BuildContext context, _BubbleColors colors, bool isDarkMode) {
+    final bool deletedBySelf = deletedBy == currentUserId;
+    final String deletedText = deletedBySelf
+        ? 'You deleted this message'
+        : 'This message was deleted';
+
+    final receiverColors = _BubbleColors.receiver(isDarkMode, bubbleStyle);
+    final bubbleColor = isMe
+        ? colors.bubble.withOpacity(0.5)
+        : receiverColors.bubble;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bubbleColor,
+        borderRadius: borderRadius,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.block,
+            size: 16,
+            color: isMe
+                ? colors.text.withOpacity(0.6)
+                : receiverColors.text.withOpacity(0.5),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              deletedText,
+              style: TextStyle(
+                color: isMe
+                    ? colors.text.withOpacity(0.6)
+                    : receiverColors.text.withOpacity(0.5),
+                fontSize: 14.5,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
