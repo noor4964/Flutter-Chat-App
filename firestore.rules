@@ -163,26 +163,36 @@ service cloud.firestore {
     // ✅ Posts Collection (Social Media Feed)
     match /posts/{postId} {
       // Anyone who is authenticated can read posts
+      // Client-side code handles privacy filtering
       allow read: if isAuthenticated();
-      
+
       // Only the post owner can create posts with their user ID
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      
-      // Any authenticated user can update likes/commentsCount (social interactions)
-      // Only the post owner can update other fields (caption, privacy, etc.)
+
+      // Post update permissions:
+      // - Post owner can update any field
+      // - Any authenticated user can update likes array or commentsCount
       allow update: if isAuthenticated() && (
+        // Owner can update anything
         resource.data.userId == request.auth.uid ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'commentsCount'])
+        // Non-owners can only update likes or commentsCount fields
+        (resource.data.userId != request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'commentsCount']))
       );
-      
+
       // Only the post owner can delete their posts
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      
+
       // Comments subcollection
       match /comments/{commentId} {
+        // Anyone can read comments on posts they can access
         allow read: if isAuthenticated();
+        // Anyone can create comments with their own user ID
         allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-        allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        // Comment owner can update their own comments
+        allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        // Comment owner can delete their own comments
+        allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
       }
     }
   }

@@ -439,22 +439,27 @@ class FeedProvider extends ChangeNotifier {
     }
 
     try {
-      final friendsDoc = await FirebaseFirestore.instance
-          .collection('friends')
-          .doc(uid)
+      // Query connections collection where current user is involved and status is accepted
+      final snapshot = await FirebaseFirestore.instance
+          .collection('connections')
+          .where('status', isEqualTo: 'accepted')
+          .where(Filter.or(
+              Filter('senderId', isEqualTo: uid),
+              Filter('receiverId', isEqualTo: uid)))
           .get();
 
-      if (friendsDoc.exists) {
-        final data = friendsDoc.data();
-        if (data != null && data.containsKey('friendIds')) {
-          _friendIds = List<String>.from(data['friendIds'] ?? []);
-        }
-      } else {
-        _friendIds = [];
-      }
+      // Extract friend IDs (take the OTHER user's ID from each connection)
+      _friendIds = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return data['senderId'] == uid
+            ? data['receiverId'] as String
+            : data['senderId'] as String;
+      }).toList();
+
       _friendsCacheTime = DateTime.now();
     } catch (e) {
       debugPrint('Error loading friends list: $e');
+      _friendIds = [];
     }
   }
 

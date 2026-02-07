@@ -608,19 +608,22 @@ class PostService {
   // Helper method to get user's friends list
   Future<List<String>> _getFriendsList(String userId) async {
     try {
-      final friendsDoc =
-          await _firestore.collection('friends').doc(userId).get();
+      // Query connections where user is involved and status is accepted
+      final snapshot = await _firestore
+          .collection('connections')
+          .where('status', isEqualTo: 'accepted')
+          .where(Filter.or(
+              Filter('senderId', isEqualTo: userId),
+              Filter('receiverId', isEqualTo: userId)))
+          .get();
 
-      if (!friendsDoc.exists) {
-        return [];
-      }
-
-      final data = friendsDoc.data();
-      if (data != null && data.containsKey('friendIds')) {
-        return List<String>.from(data['friendIds'] ?? []);
-      }
-
-      return [];
+      // Extract friend IDs (take the OTHER user's ID from each connection)
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        return data['senderId'] == userId
+            ? data['receiverId'] as String
+            : data['senderId'] as String;
+      }).toList();
     } catch (e) {
       print('Error getting friends list: $e');
       return [];
@@ -629,23 +632,22 @@ class PostService {
 
   // Helper method to check friendship status between two users
   Future<bool> _checkFriendshipStatus(String userId1, String userId2) async {
-    if (userId1.isEmpty || userId2.isEmpty) return false;
+    if (userId1.isEmpty || userId2.isEmpty || userId1 == userId2) {
+      return userId1 == userId2;
+    }
 
     try {
-      final friendsDoc =
-          await _firestore.collection('friends').doc(userId1).get();
+      final snapshot = await _firestore
+          .collection('connections')
+          .where('status', isEqualTo: 'accepted')
+          .where(Filter.or(
+              Filter.and(Filter('senderId', isEqualTo: userId1),
+                  Filter('receiverId', isEqualTo: userId2)),
+              Filter.and(Filter('senderId', isEqualTo: userId2),
+                  Filter('receiverId', isEqualTo: userId1))))
+          .get();
 
-      if (!friendsDoc.exists) {
-        return false;
-      }
-
-      final data = friendsDoc.data();
-      if (data != null && data.containsKey('friendIds')) {
-        List<String> friendIds = List<String>.from(data['friendIds'] ?? []);
-        return friendIds.contains(userId2);
-      }
-
-      return false;
+      return snapshot.docs.isNotEmpty;
     } catch (e) {
       print('Error checking friendship status: $e');
       return false;
