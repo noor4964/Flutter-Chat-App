@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_chat_app/views/profile/profile_screen.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
-import 'package:flutter_chat_app/views/settings/settings_screen.dart';
-import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'package:flutter_chat_app/views/social/news_feed_screen.dart';
 import 'package:flutter_chat_app/views/post/post_create_screen.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
@@ -14,7 +11,7 @@ import 'package:flutter_chat_app/views/create_story_screen.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
-import 'package:flutter_chat_app/views/friends_profile_screen.dart';
+import 'package:flutter_chat_app/views/profile/profile_tab_screen.dart';
 import 'package:flutter_chat_app/widgets/web_layout_wrapper.dart';
 import 'package:flutter_chat_app/widgets/messenger_left_sidebar.dart';
 import 'package:flutter_chat_app/widgets/messenger_right_sidebar.dart';
@@ -40,11 +37,7 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
 
   // State variable to store user profile image URL
   String? _userProfileImageUrl;
-  String? _username;
 
-  // State variable for friend request count
-  int _friendRequestCount = 0;
-  
   // State variables for selected chat (persisted across layout changes)
   String? _selectedChatId;
   String? _selectedChatName;
@@ -56,36 +49,12 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     super.initState();
     _isMounted = true;
     _loadUserProfileData(); // Load profile data when screen initializes
-    _loadFriendRequestCount(); // Load friend request count
   }
 
   @override
   void dispose() {
     _isMounted = false;
     super.dispose();
-  }
-
-  // Load friend request count from Firestore
-  Future<void> _loadFriendRequestCount() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        // Get pending friend requests from 'connections' collection
-        QuerySnapshot connectionsSnapshot = await FirebaseFirestore.instance
-            .collection('connections')
-            .where('receiverId', isEqualTo: user.uid)
-            .where('status', isEqualTo: 'pending')
-            .get();
-
-        if (_isMounted && mounted) {
-          setState(() {
-            _friendRequestCount = connectionsSnapshot.docs.length;
-          });
-        }
-      }
-    } catch (e) {
-      print('❌ Error loading friend request count: $e');
-    }
   }
 
   // Load user profile data from Firestore
@@ -100,12 +69,10 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
 
         var userData = userDoc.data() as Map<String, dynamic>?;
         String? profileImageUrl = userData?['profileImageUrl'];
-        String? username = userData?['username'];
 
         if (_isMounted && mounted) {
           setState(() {
             _userProfileImageUrl = profileImageUrl;
-            _username = username;
           });
         }
       }
@@ -138,9 +105,9 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     // Define page titles for web layout
     final pageTitles = [
       'News Feed',
-      'Chats', 
+      'Chats',
       'Stories',
-      'Menu'
+      'Profile'
     ];
 
     // Main content widget — IndexedStack keeps all pages alive.
@@ -151,7 +118,7 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         _buildErrorSafeScreen(const NewsFeedScreen()),
         _buildErrorSafeScreen(_buildChatsSection()),
         _buildErrorSafeScreen(_buildStoriesSection()),
-        _buildErrorSafeScreen(_buildMenuSection()),
+        _buildErrorSafeScreen(ProfileTabScreen(onProfileUpdated: _loadUserProfileData)),
       ],
     );
 
@@ -221,26 +188,58 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         selectedItemColor: colorScheme.primary,
         unselectedItemColor: Colors.grey,
         type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
+        items: [
+          const BottomNavigationBarItem(
             icon: Icon(Icons.view_list),
             activeIcon: Icon(Icons.view_list),
             label: 'Feed',
           ),
-          BottomNavigationBarItem(
+          const BottomNavigationBarItem(
             icon: Icon(Icons.chat_bubble_outline),
             activeIcon: Icon(Icons.chat_bubble),
             label: 'Chats',
           ),
-          BottomNavigationBarItem(
+          const BottomNavigationBarItem(
             icon: Icon(Icons.auto_stories_outlined),
             activeIcon: Icon(Icons.auto_stories),
             label: 'Stories',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.menu),
-            activeIcon: Icon(Icons.menu),
-            label: 'Menu',
+            icon: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: CircleAvatar(
+                radius: 14,
+                backgroundColor: Colors.grey[300],
+                backgroundImage: _getUserProfileImage(),
+                child: _getUserProfileImage() == null
+                    ? Icon(Icons.person, size: 16, color: Colors.grey[600])
+                    : null,
+              ),
+            ),
+            activeIcon: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: colorScheme.primary,
+                  width: 2,
+                ),
+              ),
+              child: CircleAvatar(
+                radius: 14,
+                backgroundColor: Colors.grey[300],
+                backgroundImage: _getUserProfileImage(),
+                child: _getUserProfileImage() == null
+                    ? Icon(Icons.person, size: 16, color: Colors.grey[600])
+                    : null,
+              ),
+            ),
+            label: 'Profile',
           ),
         ],
       ),
@@ -839,102 +838,6 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     );
   }
 
-  // Helper method to build menu sections (renamed to avoid conflict)
-  Widget _buildMenuSectionHeader(String title, List<Widget> items) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-          child: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        ...items,
-      ],
-    );
-  }
-
-  // Helper method to build menu items
-  Widget _buildMenuItem({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-    String? badge,
-    Color? iconColor,
-    Color? textColor,
-  }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Card(
-      elevation: 0,
-      color: Colors.grey.withOpacity(0.1),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: iconColor != null
-                      ? iconColor.withOpacity(0.1)
-                      : colorScheme.primaryContainer.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  icon,
-                  color: iconColor ?? colorScheme.primary,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: textColor,
-                  ),
-                ),
-              ),
-              if (badge != null)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.red,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    badge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   // Helper method to get user profile image with error handling
   ImageProvider? _getUserProfileImage() {
     try {
@@ -991,243 +894,6 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
   // Build a proper error boundary widget
   Widget _buildErrorSafeScreen(Widget screen) {
     return ErrorBoundary(child: screen);
-  }
-
-  // Menu Section - User profile and app settings
-  Widget _buildMenuSection() {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final user = FirebaseAuth.instance.currentUser;
-
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16.0),
-        children: [
-          // Profile header with user info
-          Card(
-            margin: const EdgeInsets.only(bottom: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 32,
-                    backgroundColor: colorScheme.primaryContainer,
-                    backgroundImage: _getUserProfileImage(),
-                    child: _getUserProfileImage() == null
-                        ? Text(
-                            _getUserInitials(),
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.primary,
-                            ),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _username ?? user?.displayName ?? 'User',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          user?.email ?? '',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.edit),
-                    onPressed: () {
-                      // Navigate to profile screen
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => ProfileScreen()),
-                      ).then((_) {
-                        // Refresh user data when returning from profile screen
-                        _loadUserProfileData();
-                      });
-                    },
-                    tooltip: 'Edit profile',
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Account section
-          _buildMenuSectionHeader('Account', [
-            _buildMenuItem(
-              icon: Icons.person_outline,
-              title: 'Profile',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ProfileScreen()),
-                ).then((_) {
-                  // Refresh user data when returning from profile screen
-                  _loadUserProfileData();
-                });
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.people_outline,
-              title: 'Friend Requests',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => PendingRequestsScreen()),
-                ).then((_) {
-                  // Refresh friend request count when returning
-                  _loadFriendRequestCount();
-                });
-              },
-              badge: _friendRequestCount > 0
-                  ? _friendRequestCount.toString()
-                  : null,
-            ),
-            _buildMenuItem(
-              icon: Icons.people,
-              title: 'Friends',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const FriendsProfileScreen()),
-                );
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Settings section
-          _buildMenuSectionHeader('Preferences', [
-            _buildMenuItem(
-              icon: Icons.settings_outlined,
-              title: 'Settings',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => SettingsScreen()),
-                );
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.dark_mode_outlined,
-              title: 'Dark Mode',
-              onTap: () {
-                // Toggle dark mode functionality would go here
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Dark mode toggle coming soon')),
-                );
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Help & feedback section
-          _buildMenuSectionHeader('Help & Feedback', [
-            _buildMenuItem(
-              icon: Icons.help_outline,
-              title: 'Help Center',
-              onTap: () {
-                // Navigate to help center or open web link
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Help center coming soon')),
-                );
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.feedback_outlined,
-              title: 'Send Feedback',
-              onTap: () {
-                // Open feedback form
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Feedback form coming soon')),
-                );
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Logout section
-          _buildMenuSectionHeader('Session', [
-            _buildMenuItem(
-              icon: Icons.logout,
-              title: 'Log Out',
-              onTap: () async {
-                // Show confirmation dialog
-                final bool confirm = await showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('Log Out'),
-                        content:
-                            const Text('Are you sure you want to log out?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            child: const Text('Cancel'),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop(context, true),
-                            child: const Text('Log Out'),
-                          ),
-                        ],
-                      ),
-                    ) ??
-                    false;
-
-                if (confirm) {
-                  try {
-                    await FirebaseAuth.instance.signOut();
-                    // Navigate to login screen or restart app
-                  } catch (e) {
-                    print('❌ Error signing out: $e');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to log out: $e')),
-                    );
-                  }
-                }
-              },
-              iconColor: Colors.red,
-              textColor: Colors.red,
-            ),
-          ]),
-
-          // Version info
-          const SizedBox(height: 24),
-          Center(
-            child: Text(
-              'App version 1.0.0',
-              style: TextStyle(
-                color: Colors.grey,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   // Get privacy icon based on story privacy
