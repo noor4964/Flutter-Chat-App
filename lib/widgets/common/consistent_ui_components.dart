@@ -70,8 +70,8 @@ class ConsistentButton extends StatelessWidget {
 
     // Disabled state
     if (onPressed == null && !isLoading) {
-      backgroundColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
-      foregroundColor = isDark ? Colors.grey.shade600 : Colors.grey.shade500;
+      backgroundColor = isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300;
+      foregroundColor = isDark ? const Color(0xFF3A3A3A) : Colors.grey.shade500;
       borderColor = borderColor != null ? Colors.grey.shade400 : null;
     }
 

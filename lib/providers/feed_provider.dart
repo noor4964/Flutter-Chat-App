@@ -3,9 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/models/post_model.dart';
+import 'package:flutter_chat_app/models/comment_model.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
+import 'package:flutter_chat_app/services/post_service.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
 
 /// Centralized feed state provider.
@@ -60,6 +62,9 @@ class FeedProvider extends ChangeNotifier {
   List<String> _friendIds = [];
   DateTime? _friendsCacheTime;
   static const Duration _friendsCacheDuration = Duration(minutes: 10);
+
+  // ── PostService for mutations ─────────────────────────────────────────
+  final PostService _postService = PostService();
 
   // ── Public getters ────────────────────────────────────────────────────
   List<Post> get posts => _posts;
@@ -252,6 +257,88 @@ class FeedProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error loading more posts: $e');
       _isLoadingMore = false;
+      notifyListeners();
+    }
+  }
+
+  // ── Social Interaction Methods ──────────────────────────────────────
+
+  /// Optimistically toggle like on a post, then persist via PostService.
+  /// Reverts local state on failure.
+  Future<void> toggleLike(String postId) async {
+    final uid = _currentUserId;
+    if (uid == null) return;
+
+    // Find post index
+    final idx = _posts.indexWhere((p) => p.id == postId);
+    if (idx == -1) return;
+
+    // Snapshot for rollback
+    final original = _posts[idx];
+    final wasLiked = original.likes.contains(uid);
+    final newLikes = List<String>.from(original.likes);
+
+    if (wasLiked) {
+      newLikes.remove(uid);
+    } else {
+      newLikes.add(uid);
+    }
+
+    // Optimistic update
+    _posts[idx] = original.copyWith(likes: newLikes);
+    notifyListeners();
+
+    try {
+      await _postService.toggleLike(postId);
+    } catch (e) {
+      // Revert on failure
+      debugPrint('toggleLike failed, reverting: $e');
+      _posts[idx] = original;
+      notifyListeners();
+    }
+  }
+
+  /// Add a comment to a post. Optimistically increments commentsCount.
+  Future<Comment?> addComment(String postId, String text) async {
+    if (text.trim().isEmpty) return null;
+
+    final idx = _posts.indexWhere((p) => p.id == postId);
+    if (idx == -1) return null;
+
+    // Optimistic: increment commentsCount locally
+    final original = _posts[idx];
+    _posts[idx] = original.copyWith(commentsCount: original.commentsCount + 1);
+    notifyListeners();
+
+    try {
+      final comment = await _postService.addComment(postId, text.trim());
+      return comment;
+    } catch (e) {
+      // Revert on failure
+      debugPrint('addComment failed, reverting: $e');
+      _posts[idx] = original;
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Delete a comment from a post. Optimistically decrements commentsCount.
+  Future<void> deleteComment(String postId, String commentId) async {
+    final idx = _posts.indexWhere((p) => p.id == postId);
+    if (idx == -1) return;
+
+    // Optimistic: decrement commentsCount locally
+    final original = _posts[idx];
+    _posts[idx] = original.copyWith(
+      commentsCount: (original.commentsCount - 1).clamp(0, 999999),
+    );
+    notifyListeners();
+
+    try {
+      await _postService.deleteComment(postId, commentId);
+    } catch (e) {
+      debugPrint('deleteComment failed, reverting: $e');
+      _posts[idx] = original;
       notifyListeners();
     }
   }

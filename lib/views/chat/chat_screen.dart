@@ -51,6 +51,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   final ChatService _chatService = ChatService();
   final User? user = FirebaseAuth.instance.currentUser;
   final ScrollController _scrollController = ScrollController();
@@ -135,12 +136,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     // Listen to text changes to animate send button
     _messageController.addListener(_onMessageTextChanged);
 
-    // Set up keyboard listener after first frame (mobile only)
-    if (!kIsWeb) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _setupKeyboardListener();
-      });
-    }
+    // Auto-focus message input so user can start typing immediately
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _messageFocusNode.requestFocus();
+      // Set up keyboard listener (mobile only)
+      if (!kIsWeb) _setupKeyboardListener();
+    });
   }
 
   void _onMessageTextChanged() {
@@ -222,6 +223,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     _updatePresence(false);
 
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _scrollController.dispose();
     _sendButtonAnimationController.dispose();
 
@@ -494,7 +496,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       _replyingTo = message.text;
     });
     _messageController.text = '';
-    FocusScope.of(context).requestFocus(FocusNode());
+    _messageFocusNode.requestFocus();
   }
 
   void _cancelReply() {
@@ -1102,6 +1104,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                 } : null,
                                 child: TextField(
                                   controller: _messageController,
+                                  focusNode: _messageFocusNode,
                                   decoration: InputDecoration(
                                     hintText: 'Type a message...',
                                     hintStyle: TextStyle(
@@ -1136,7 +1139,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                   onEditingComplete: () {
                                     _ensureScrollPosition();
                                   },
-                                  autofocus: kIsWeb,
+                                  autofocus: false,
                                 ),
                               ),
                             ),
@@ -1590,6 +1593,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     
     // Clear input immediately for better UX (optimistic)
     _messageController.clear();
+
+    // Keep focus on the text field so user can keep typing
+    _messageFocusNode.requestFocus();
 
     // Reset reply state and prevent double-send (no spinner UI)
     setState(() {

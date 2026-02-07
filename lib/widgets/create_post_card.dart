@@ -152,40 +152,67 @@ class _CreatePostCardState extends State<CreatePostCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colorScheme = theme.colorScheme;
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      return Card(
-        margin: const EdgeInsets.all(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Center(
-            child: Text(
-              'Sign in to create posts',
-              style: theme.textTheme.titleMedium,
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.black : Colors.white,
+          border: Border(
+            bottom: BorderSide(
+              color: isDark
+                  ? Colors.white.withOpacity(0.10)
+                  : Colors.black.withOpacity(0.06),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Center(
+          child: Text(
+            'Sign in to create posts',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: isDark ? Colors.white54 : Colors.grey[600],
             ),
           ),
         ),
       );
     }
 
-    return Card(
-      margin: const EdgeInsets.all(12),
-      elevation: 3,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.black : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark
+                ? Colors.white.withOpacity(0.10)
+                : Colors.black.withOpacity(0.06),
+            width: 0.5,
+          ),
+        ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 300),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 20,
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 300),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withOpacity(0.1)
+                          : Colors.black.withOpacity(0.08),
+                      width: 1,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 18,
                     backgroundImage: _userProfileImage.isNotEmpty
                         ? NetworkImage(_userProfileImage)
                         : null,
@@ -193,140 +220,225 @@ class _CreatePostCardState extends State<CreatePostCard> {
                         ? Text(_userName.isNotEmpty ? _userName[0] : 'U')
                         : null,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _isExpanded = true;
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[200],
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        child: Text(
-                          _isExpanded ? '' : "What's on your mind?",
-                          style: TextStyle(color: Colors.grey[700]),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.photo),
-                    color: Colors.green,
-                    onPressed: _pickImage,
-                  ),
-                ],
-              ),
-              if (_isExpanded) ...[
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _captionController,
-                  maxLines: 5,
-                  minLines: 1,
-                  decoration: const InputDecoration(
-                    hintText: "What's on your mind?",
-                    border: InputBorder.none,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _isExpanded = true;
+                      });
+                    },
+                    child: _isExpanded
+                        ? const SizedBox.shrink()
+                        : Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? const Color(0xFF121212)
+                                  : const Color(0xFFF5F5F7),
+                              borderRadius: BorderRadius.circular(28),
+                              border: Border.all(
+                                color: isDark
+                                    ? Colors.white.withOpacity(0.10)
+                                    : Colors.black.withOpacity(0.04),
+                              ),
+                            ),
+                            child: Text(
+                              "What's on your mind?",
+                              style: TextStyle(
+                                color:
+                                    isDark ? Colors.white54 : Colors.grey[500],
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
                   ),
                 ),
-                if (_selectedImage != null) ...[
-                  const SizedBox(height: 12),
-                  Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.file(
-                          _selectedImage!,
-                          width: double.infinity,
-                          height: 200,
-                          fit: BoxFit.cover,
-                        ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(
+                    Icons.photo_outlined,
+                    color: isDark ? Colors.white70 : Colors.green[600],
+                  ),
+                  onPressed: _pickImage,
+                  splashRadius: 22,
+                ),
+              ],
+            ),
+            if (_isExpanded) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _captionController,
+                maxLines: 5,
+                minLines: 1,
+                style: theme.textTheme.bodyMedium,
+                decoration: InputDecoration(
+                  hintText: "What's on your mind?",
+                  hintStyle: TextStyle(
+                    color: isDark ? Colors.white38 : Colors.grey[400],
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              if (_selectedImage != null) ...[
+                const SizedBox(height: 12),
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.file(
+                        _selectedImage!,
+                        width: double.infinity,
+                        height: 200,
+                        fit: BoxFit.cover,
                       ),
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _selectedImage = null;
-                            });
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.6),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close,
-                              color: Colors.white,
-                              size: 20,
-                            ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedImage = null;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 20,
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _locationController,
-                  decoration: const InputDecoration(
-                    hintText: "Add location (optional)",
-                    prefixIcon: Icon(Icons.location_on),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    _buildPrivacySelector(),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _captionController.clear();
-                          _locationController.clear();
-                          _selectedImage = null;
-                          _isExpanded = false;
-                          _selectedPrivacy = PostPrivacy.public;
-                        });
-                      },
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _isPosting ? null : _createPost,
-                      child: _isPosting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : const Text('Post'),
                     ),
                   ],
                 ),
               ],
+              const SizedBox(height: 12),
+              // Location field — capsule style
+              TextField(
+                controller: _locationController,
+                style: theme.textTheme.bodyMedium,
+                decoration: InputDecoration(
+                  hintText: "Add location (optional)",
+                  hintStyle: TextStyle(
+                    color: isDark ? Colors.white38 : Colors.grey[400],
+                    fontSize: 14,
+                  ),
+                  prefixIcon: Icon(Icons.location_on_outlined,
+                      color: isDark ? Colors.white38 : Colors.grey[400],
+                      size: 20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(28),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: isDark
+                      ? const Color(0xFF121212)
+                      : const Color(0xFFF5F5F7),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _buildPrivacySelector(isDark),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _captionController.clear();
+                        _locationController.clear();
+                        _selectedImage = null;
+                        _isExpanded = false;
+                        _selectedPrivacy = PostPrivacy.public;
+                      });
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor:
+                          isDark ? Colors.white54 : Colors.grey[600],
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  // Gradient Post button
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          colorScheme.primary,
+                          HSLColor.fromColor(colorScheme.primary)
+                              .withHue(
+                                  (HSLColor.fromColor(colorScheme.primary)
+                                              .hue +
+                                          18) %
+                                      360)
+                              .withLightness(
+                                  (HSLColor.fromColor(colorScheme.primary)
+                                              .lightness -
+                                          0.06)
+                                      .clamp(0.0, 1.0))
+                              .toColor(),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.primary.withOpacity(0.35),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(24),
+                        onTap: _isPosting ? null : _createPost,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 10),
+                          child: _isPosting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Post',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildPrivacySelector() {
+  Widget _buildPrivacySelector(bool isDark) {
     return PopupMenuButton<PostPrivacy>(
       initialValue: _selectedPrivacy,
       onSelected: (PostPrivacy privacy) {
@@ -386,8 +498,18 @@ class _CreatePostCardState extends State<CreatePostCard> {
               : _selectedPrivacy == PostPrivacy.friends
                   ? 'Friends'
                   : 'Private',
+          style: TextStyle(
+            fontSize: 13,
+            color: isDark ? Colors.white70 : Colors.black87,
+          ),
         ),
-        backgroundColor: Colors.grey[200],
+        backgroundColor:
+            isDark ? const Color(0xFF121212) : const Color(0xFFF0F0F3),
+        side: BorderSide(
+          color: isDark
+              ? Colors.white.withOpacity(0.10)
+              : Colors.black.withOpacity(0.06),
+        ),
       ),
     );
   }

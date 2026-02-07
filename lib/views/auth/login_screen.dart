@@ -299,7 +299,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 Expanded(
                                   child: Divider(
                                     color: isDarkMode
-                                        ? Colors.grey[700]
+                                        ? const Color(0xFF2C2C2C)
                                         : Colors.grey[300],
                                   ),
                                 ),
@@ -319,7 +319,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 Expanded(
                                   child: Divider(
                                     color: isDarkMode
-                                        ? Colors.grey[700]
+                                        ? const Color(0xFF2C2C2C)
                                         : Colors.grey[300],
                                   ),
                                 ),

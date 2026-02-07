@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_chat_app/models/post_model.dart';
+import 'package:flutter_chat_app/models/comment_model.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import '../services/firebase_config.dart';
 import 'dart:async';
@@ -370,9 +371,9 @@ class PostService {
     }
   }
 
-  // Like or unlike a post
-  Future<void> toggleLike(String postId) async {
-    if (_isWindowsWithoutFirebase) return;
+  // Like or unlike a post (transaction-safe)
+  Future<bool> toggleLike(String postId) async {
+    if (_isWindowsWithoutFirebase) return false;
 
     try {
       final User? currentUser = _auth.currentUser;
@@ -380,31 +381,152 @@ class PostService {
         throw Exception('User not authenticated');
       }
 
-      // Get the post
-      final postDoc = await _firestore.collection('posts').doc(postId).get();
-      if (!postDoc.exists) {
-        throw Exception('Post not found');
-      }
+      final postRef = _firestore.collection('posts').doc(postId);
 
-      final postData = postDoc.data()!;
-      List<String> likes = List<String>.from(postData['likes'] ?? []);
+      return await _firestore.runTransaction<bool>((transaction) async {
+        final postDoc = await transaction.get(postRef);
+        if (!postDoc.exists) {
+          throw Exception('Post not found');
+        }
 
-      // Toggle like
-      if (likes.contains(currentUser.uid)) {
-        // Unlike the post
-        likes.remove(currentUser.uid);
-      } else {
-        // Like the post
-        likes.add(currentUser.uid);
-      }
+        final postData = postDoc.data()!;
+        final likes = List<String>.from(postData['likes'] ?? []);
+        final bool wasLiked = likes.contains(currentUser.uid);
 
-      // Update the post
-      await _firestore.collection('posts').doc(postId).update({
-        'likes': likes,
+        if (wasLiked) {
+          likes.remove(currentUser.uid);
+        } else {
+          likes.add(currentUser.uid);
+        }
+
+        transaction.update(postRef, {'likes': likes});
+        return !wasLiked; // true if now liked, false if now unliked
       });
     } catch (e) {
       print('Error toggling like: $e');
+      rethrow;
     }
+  }
+
+  // ── Comment CRUD ────────────────────────────────────────────────────
+
+  /// Add a comment to a post. Returns the created [Comment].
+  Future<Comment> addComment(String postId, String text) async {
+    if (_isWindowsWithoutFirebase) {
+      throw Exception('Comments not available on Windows');
+    }
+
+    final User? currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    // Get user profile data for denormalized fields
+    final userDoc =
+        await _firestore.collection('users').doc(currentUser.uid).get();
+    final userData = userDoc.data() ?? {};
+
+    final commentRef = _firestore
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .doc();
+
+    final commentData = {
+      'userId': currentUser.uid,
+      'username': userData['username'] ?? 'Anonymous',
+      'userProfileImage': userData['profileImageUrl'] ?? '',
+      'text': text,
+      'timestamp': FieldValue.serverTimestamp(),
+      'likes': <String>[],
+    };
+
+    // Batch: create comment + increment commentsCount atomically
+    final batch = _firestore.batch();
+    batch.set(commentRef, commentData);
+    batch.update(
+      _firestore.collection('posts').doc(postId),
+      {'commentsCount': FieldValue.increment(1)},
+    );
+    await batch.commit();
+
+    // Return a local Comment for immediate UI update
+    return Comment(
+      id: commentRef.id,
+      postId: postId,
+      userId: currentUser.uid,
+      username: userData['username'] ?? 'Anonymous',
+      userProfileImage: userData['profileImageUrl'] ?? '',
+      text: text,
+      timestamp: DateTime.now(),
+      likes: [],
+    );
+  }
+
+  /// Delete a comment. Only the comment author can delete.
+  Future<void> deleteComment(String postId, String commentId) async {
+    if (_isWindowsWithoutFirebase) return;
+
+    final User? currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('User not authenticated');
+    }
+
+    final batch = _firestore.batch();
+    batch.delete(
+      _firestore
+          .collection('posts')
+          .doc(postId)
+          .collection('comments')
+          .doc(commentId),
+    );
+    batch.update(
+      _firestore.collection('posts').doc(postId),
+      {'commentsCount': FieldValue.increment(-1)},
+    );
+    await batch.commit();
+  }
+
+  /// Real-time stream of comments for a post, ordered newest first.
+  Stream<List<Comment>> getComments(String postId) {
+    if (_isWindowsWithoutFirebase) return Stream.value([]);
+
+    return _firestore
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => Comment.fromFirestore(doc, postId: postId))
+            .toList());
+  }
+
+  /// Toggle like on a comment (transaction-safe).
+  Future<void> toggleCommentLike(String postId, String commentId) async {
+    if (_isWindowsWithoutFirebase) return;
+
+    final User? currentUser = _auth.currentUser;
+    if (currentUser == null) return;
+
+    final commentRef = _firestore
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .doc(commentId);
+
+    await _firestore.runTransaction((transaction) async {
+      final doc = await transaction.get(commentRef);
+      if (!doc.exists) return;
+
+      final likes = List<String>.from(doc.data()?['likes'] ?? []);
+      if (likes.contains(currentUser.uid)) {
+        likes.remove(currentUser.uid);
+      } else {
+        likes.add(currentUser.uid);
+      }
+      transaction.update(commentRef, {'likes': likes});
+    });
   }
 
   // Delete a post

@@ -36,8 +36,8 @@ class _BubbleColors {
   /// Receiver (other) bubble: surface container tones.
   factory _BubbleColors.receiver(bool isDark, String bubbleStyle) {
     return _BubbleColors(
-      bubble: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF0F0F3),
-      bubbleEnd: isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF0F0F3),
+      bubble: isDark ? const Color(0xFF121212) : const Color(0xFFF0F0F3),
+      bubbleEnd: isDark ? const Color(0xFF121212) : const Color(0xFFF0F0F3),
       text: isDark ? Colors.white : const Color(0xFF1A1A1A),
       meta: isDark
           ? Colors.white.withOpacity(0.5)

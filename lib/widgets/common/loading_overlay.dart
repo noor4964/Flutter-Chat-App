@@ -135,8 +135,8 @@ class _ShimmerLoadingCardState extends State<ShimmerLoadingCard>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final baseColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
-    final highlightColor = isDark ? Colors.grey.shade700 : Colors.grey.shade100;
+    final baseColor = isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300;
+    final highlightColor = isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade100;
 
     return AnimatedBuilder(
       animation: _animation,
