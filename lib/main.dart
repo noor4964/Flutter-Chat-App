@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:flutter_callkit_incoming/entities/call_event.dart';
 import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/providers/chat_provider.dart';
+import 'package:flutter_chat_app/providers/call_provider.dart';
 import 'package:flutter_chat_app/providers/feed_provider.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
@@ -22,8 +24,7 @@ import 'package:flutter_chat_app/views/messenger_home_screen.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/screens/notification_test_screen.dart';
-import 'package:flutter_chat_app/services/calls/enhanced_call_service.dart';
-import 'package:flutter_chat_app/views/calls/enhanced_audio_call_screen.dart';
+import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 
 import 'services/story_service.dart';
 
@@ -78,6 +79,11 @@ void main() async {
           feedProvider.initialize();
           return feedProvider;
         }),
+        ChangeNotifierProvider(create: (context) {
+          final callProvider = CallProvider();
+          callProvider.initialize();
+          return callProvider;
+        }),
       ],
       child: MyApp(),
     ),
@@ -94,35 +100,37 @@ Future<void> _initCallKit() async {
 
   try {
     // Set up CallKit event listeners
-    FlutterCallkitIncoming.onEvent.listen((event) async {
+    FlutterCallkitIncoming.onEvent.listen((CallEvent? event) async {
       if (event == null) return;
 
-      final Map<String, dynamic> callEvent = event as Map<String, dynamic>;
-      print('CallKit event: ${callEvent['event']}');
+      print('CallKit event: ${event.event}');
 
-      switch (callEvent['event']) {
-        case 'ACTION_CALL_ACCEPT':
-          // User accepted the call
-          print('Call accepted: ${callEvent['body']}');
+      switch (event.event) {
+        case Event.actionCallAccept:
+          // User accepted the call from native UI
+          print('Call accepted: ${event.body}');
           final CallService callService = CallService();
           await callService.initialize();
-          await callService.answerCall(callEvent['body']['id']);
+          final callId = event.body?['id'] ?? '';
+          if (callId.isNotEmpty) {
+            await callService.answerCall(callId);
+          }
           break;
 
-        case 'ACTION_CALL_DECLINE':
-          // User declined the call
-          print('Call declined: ${callEvent['body']}');
+        case Event.actionCallDecline:
+          // User declined the call from native UI
+          print('Call declined: ${event.body}');
           final CallService callService = CallService();
           await callService.endCall(isDeclined: true);
           break;
 
-        case 'ACTION_CALL_ENDED':
-          // Call ended
-          print('Call ended: ${callEvent['body']}');
+        case Event.actionCallEnded:
+          // Call ended from native UI
+          print('Call ended: ${event.body}');
           break;
 
         default:
-          print('Unhandled call event: ${callEvent['event']}');
+          print('Unhandled call event: ${event.event}');
           break;
       }
     });
@@ -284,16 +292,26 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Add WidgetsBindingObserver to track app lifecycle
-  
-  StreamSubscription<Call>? _incomingCallSubscription;
-  EnhancedCallService? _enhancedCallService;
 
   @override
   void initState() {
     super.initState();
     _initializeCollections();
     _initializePresence();
-    _initializeCallListening();
+
+    // Set up incoming call handler via CallProvider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final callProvider = Provider.of<CallProvider>(context, listen: false);
+      callProvider.onIncomingCall = (call) {
+        if (mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => AudioCallScreen(call: call, isIncoming: true),
+            ),
+          );
+        }
+      };
+    });
 
     // Register lifecycle observer
     WidgetsBinding.instance.addObserver(this);
@@ -304,7 +322,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Unregister lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
     _setUserOffline();
-    _incomingCallSubscription?.cancel();
     super.dispose();
   }
 
@@ -345,50 +362,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       print('✅ User set to online');
     } catch (e) {
       print('❌ Error initializing presence: $e');
-    }
-  }
-
-  // Initialize incoming call listening
-  Future<void> _initializeCallListening() async {
-    try {
-      _enhancedCallService = EnhancedCallService();
-      await _enhancedCallService!.initialize();
-      
-      // Listen for incoming calls
-      _incomingCallSubscription = _enhancedCallService!.listenForIncomingCalls().listen(
-        (Call incomingCall) {
-          print('📞 Incoming call detected: ${incomingCall.callId}');
-          
-          // Only handle actual incoming calls (not the empty placeholder)
-          if (incomingCall.callId != 'no-call' && incomingCall.status == 'ringing') {
-            _handleIncomingCall(incomingCall);
-          }
-        },
-        onError: (error) {
-          print('❌ Error listening for incoming calls: $error');
-        },
-      );
-      
-      print('✅ Call listening initialized');
-    } catch (e) {
-      print('❌ Error initializing call listening: $e');
-    }
-  }
-
-  // Handle incoming call by navigating to the call screen
-  void _handleIncomingCall(Call call) {
-    print('🔔 Handling incoming call from: ${call.callerName}');
-    
-    // Navigate to the enhanced audio call screen
-    if (mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => EnhancedAudioCallScreen(
-            call: call,
-            isIncoming: true,
-          ),
-        ),
-      );
     }
   }
 

@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
-import 'package:flutter_chat_app/widgets/voice_fix_button.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final Call call;
@@ -60,14 +60,14 @@ class _VideoCallScreenState extends State<VideoCallScreen>
     _initialize();
 
     // Keep screen on during call
-    Wakelock.enable();
+    WakelockPlus.enable();
   }
 
   @override
   void dispose() {
     _rippleController.dispose();
     _callTimer?.cancel();
-    Wakelock.disable();
+    WakelockPlus.disable();
     super.dispose();
   }
 
@@ -679,22 +679,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
               ],
             ),
           ),
-          
-          // Add Voice Fix Button below main controls
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                color: Colors.black.withOpacity(0.5),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: const VoiceFixButton(
-                text: 'Fix Voice Issues',
-                color: Color(0xFF2E7D32), // A green color
-              ),
-            ),
-          ),
         ],
       );
     } else {
@@ -773,30 +757,5 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         );
       },
     );
-  }
-}
-
-// Wakelock helper class to keep screen on during calls
-class Wakelock {
-  static bool _enabled = false;
-
-  static Future<void> enable() async {
-    if (!_enabled) {
-      _enabled = true;
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
-      await SystemChannels.platform.invokeMethod(
-          'SystemChrome.setEnabledSystemUIMode', <String, dynamic>{
-        'mode': 'manual',
-        'overlays': <String>['top', 'bottom']
-      });
-    }
-  }
-
-  static Future<void> disable() async {
-    if (_enabled) {
-      _enabled = false;
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    }
   }
 }

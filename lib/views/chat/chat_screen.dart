@@ -14,11 +14,12 @@ import 'package:intl/intl.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
-import 'package:flutter_chat_app/services/calls/enhanced_call_service.dart';
-import 'package:flutter_chat_app/views/calls/enhanced_audio_call_screen.dart';
+import 'package:flutter_chat_app/providers/call_provider.dart';
+import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 import 'package:flutter_chat_app/views/calls/video_call_screen.dart';
 import 'dart:async';
 import '../../../utils/user_friendly_error_handler.dart';
+import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
@@ -1751,12 +1752,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   // Start an audio call
   Future<void> _startAudioCall() async {
-    final EnhancedCallService enhancedCallService = EnhancedCallService();
+    final callProvider = Provider.of<CallProvider>(context, listen: false);
 
     try {
-      // Initialize the enhanced call service if it hasn't been already
-      await enhancedCallService.initialize();
-
       // Use cached chatPersonId to avoid redundant Firestore read
       String calleeId = _chatPersonId ?? '';
       if (calleeId.isEmpty) {
@@ -1786,12 +1784,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
       // Show loading indicator
       setState(() {
-        _isSending = true; // Reuse the sending indicator for loading
+        _isSending = true;
       });
 
-      // Start the call using enhanced service
-      Call? call = await enhancedCallService.startCall(
-          calleeId, false); // false = audio call, not video
+      // Start the call using CallProvider
+      Call? call = await callProvider.startCall(calleeId, false);
 
       setState(() {
         _isSending = false;
@@ -1801,12 +1798,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         throw Exception('Failed to start call');
       }
 
-      // Navigate to the enhanced call screen
+      // Navigate to the audio call screen
       if (mounted) {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => EnhancedAudioCallScreen(
+            builder: (context) => AudioCallScreen(
               call: call,
               isIncoming: false,
             ),
@@ -1818,7 +1815,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = false;
       });
 
-      print('Error starting enhanced call: $e');
+      print('Error starting call: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1832,12 +1829,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   // Start a video call
   Future<void> _startVideoCall() async {
-    final EnhancedCallService enhancedCallService = EnhancedCallService();
+    final callProvider = Provider.of<CallProvider>(context, listen: false);
 
     try {
-      // Initialize the enhanced call service if it hasn't been already
-      await enhancedCallService.initialize();
-
       // Use cached chatPersonId to avoid redundant Firestore read
       String calleeId = _chatPersonId ?? '';
       if (calleeId.isEmpty) {
@@ -1867,12 +1861,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
       // Show loading indicator
       setState(() {
-        _isSending = true; // Reuse the sending indicator for loading
+        _isSending = true;
       });
 
-      // Start the call using enhanced service
-      Call? call = await enhancedCallService.startCall(
-          calleeId, true); // true = video call, not audio only
+      // Start the call using CallProvider
+      Call? call = await callProvider.startCall(calleeId, true);
 
       setState(() {
         _isSending = false;
@@ -1882,7 +1875,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         throw Exception('Failed to start call');
       }
 
-      // Navigate to the video call screen (still using the original for now)
+      // Navigate to the video call screen
       if (mounted) {
         Navigator.push(
           context,
@@ -1899,7 +1892,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         _isSending = false;
       });
 
-      print('Error starting enhanced video call: $e');
+      print('Error starting video call: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

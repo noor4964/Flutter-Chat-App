@@ -63,6 +63,7 @@ dependencies:
   agora_rtc_engine: ^6.3.3
   flutter_callkit_incoming: ^2.0.1+1
   permission_handler: ^11.1.0
+  wakelock_plus: ^1.2.8
   
   # Image and file handling
   cached_network_image: ^3.3.1
