@@ -1,3 +1,10 @@
+/// **DEPRECATED** — Use [EditProfileScreen] (`edit_profile_screen.dart`) instead.
+/// This file is retained for reference only and will be removed in a future release.
+///
+/// All navigation has been redirected to [EditProfileScreen].
+@Deprecated('Use EditProfileScreen from edit_profile_screen.dart instead')
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';

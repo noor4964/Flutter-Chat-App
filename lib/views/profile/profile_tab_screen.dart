@@ -13,7 +13,7 @@ import 'package:flutter_chat_app/services/story_service.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
 import 'package:flutter_chat_app/views/friends_profile_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
-import 'package:flutter_chat_app/views/profile/profile_screen.dart';
+import 'package:flutter_chat_app/views/profile/edit_profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/create_story_screen.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
@@ -490,7 +490,7 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => ProfileScreen()),
+                      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
                     ).then((_) {
                       _loadProfile();
                       _loadPosts();
@@ -1428,7 +1428,7 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
                     Navigator.pop(ctx);
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => ProfileScreen()),
+                      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
                     ).then((_) {
                       _loadProfile();
                       widget.onProfileUpdated?.call();

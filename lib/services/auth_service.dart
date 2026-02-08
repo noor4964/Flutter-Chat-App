@@ -352,4 +352,95 @@ class AuthService {
       rethrow;
     }
   }
+
+  // ─── Profile Management ───────────────────────────────────────────────
+
+  /// Fetch the current user's profile data from Firestore.
+  Future<Map<String, dynamic>?> getUserProfile() async {
+    if (_isWindowsWithoutFirebase) {
+      print('⚠️ Windows: returning mock profile');
+      return {
+        'uid': 'mock-uid',
+        'username': 'Windows User',
+        'email': 'mock@example.com',
+      };
+    }
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return null;
+
+      final doc = await _firestore.collection('users').doc(user.uid).get();
+      if (!doc.exists) return null;
+
+      final data = doc.data()!;
+      data['uid'] = user.uid;
+      return data;
+    } catch (e) {
+      print('❌ Error fetching user profile: $e');
+      rethrow;
+    }
+  }
+
+  /// Update the current user's profile fields in Firestore.
+  ///
+  /// [fields] should only contain the changed key-value pairs.
+  /// Automatically appends `lastUpdated` server timestamp.
+  /// Also syncs `displayName` on the Firebase Auth user if `username` changed.
+  Future<void> updateProfile(Map<String, dynamic> fields) async {
+    if (_isWindowsWithoutFirebase) {
+      print('⚠️ Windows: simulating profile update');
+      await Future.delayed(const Duration(milliseconds: 500));
+      return;
+    }
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('No authenticated user');
+
+      // Ensure server timestamp is included
+      if (!fields.containsKey('lastUpdated')) {
+        fields['lastUpdated'] = FieldValue.serverTimestamp();
+      }
+
+      print('📝 Updating profile for ${user.uid}: ${fields.keys.join(', ')}');
+
+      await _firestore.collection('users').doc(user.uid).update(fields);
+
+      // Sync displayName on Firebase Auth if username changed
+      if (fields.containsKey('username')) {
+        await user.updateDisplayName(fields['username'] as String);
+      }
+
+      print('✅ Profile updated successfully');
+    } on FirebaseException catch (e) {
+      print('❌ Firestore error updating profile: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Error updating profile: $e');
+      rethrow;
+    }
+  }
+
+  /// Check if a username is already taken by another user.
+  /// Returns `true` if the username is available.
+  Future<bool> isUsernameAvailable(String username) async {
+    if (_isWindowsWithoutFirebase) return true;
+
+    try {
+      final user = _auth.currentUser;
+      final query = await _firestore
+          .collection('users')
+          .where('username', isEqualTo: username)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) return true;
+      // Available if the only match is the current user
+      return user != null && query.docs.first.id == user.uid;
+    } catch (e) {
+      print('⚠️ Error checking username availability: $e');
+      return true; // Assume available on error to not block the user
+    }
+  }
 }

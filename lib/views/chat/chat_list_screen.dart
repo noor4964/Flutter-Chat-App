@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/chat_provider.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
-import 'package:flutter_chat_app/views/profile/profile_screen.dart';
+import 'package:flutter_chat_app/views/profile/edit_profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'chat_screen.dart';
@@ -271,7 +271,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                  builder: (context) => ProfileScreen()),
+                                  builder: (context) => const EditProfileScreen()),
                             );
                             break;
                           case 'settings':

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
-import 'package:flutter_chat_app/views/profile/profile_screen.dart';
+import 'package:flutter_chat_app/views/profile/edit_profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 
 class MessengerLeftSidebar extends StatefulWidget {
@@ -329,7 +329,7 @@ class _MessengerLeftSidebarState extends State<MessengerLeftSidebar> {
         case -3: // Profile
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => ProfileScreen()),
+            MaterialPageRoute(builder: (context) => const EditProfileScreen()),
           );
           break;
         case -4: // Settings

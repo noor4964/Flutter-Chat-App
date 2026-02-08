@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/services/auth_service.dart';
+import 'package:flutter_chat_app/models/user_model.dart';
 
 enum AuthStatus {
   initial,
@@ -114,5 +115,55 @@ class AuthProvider extends ChangeNotifier {
   void resetError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  // ─── Profile Management ───────────────────────────────────────────────
+
+  /// Fetch the current user's profile as a [UserModel].
+  Future<UserModel?> getUserProfile() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final data = await _authService.getUserProfile();
+      _isLoading = false;
+      notifyListeners();
+      return data != null ? UserModel.fromMap(data) : null;
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Update the current user's profile with the given [fields].
+  /// Returns `true` on success, `false` on failure.
+  Future<bool> updateProfile(Map<String, dynamic> fields) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _authService.updateProfile(fields);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Check if [username] is available (not taken by another user).
+  Future<bool> isUsernameAvailable(String username) async {
+    try {
+      return await _authService.isUsernameAvailable(username);
+    } catch (e) {
+      return true; // Don't block user on error
+    }
   }
 }
