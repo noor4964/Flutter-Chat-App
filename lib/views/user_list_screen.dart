@@ -5,6 +5,10 @@ import '../services/chat_service.dart';
 import '../services/auth_service.dart';
 import 'package:flutter_chat_app/views/chat/chat_screen.dart';
 import 'dart:async';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class UserListScreen extends StatefulWidget {
   @override
@@ -132,8 +136,13 @@ class _UserListScreenState extends State<UserListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('User List')),
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(title: const Text('User List'))
+          : AppBar(title: const Text('User List')),
       body: Column(
         children: [
           Padding(

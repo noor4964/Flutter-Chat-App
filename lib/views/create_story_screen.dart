@@ -4,8 +4,12 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/story_service.dart';
 import 'package:flutter_chat_app/models/story_model.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class CreateStoryScreen extends StatefulWidget {
   final XFile? initialImage;
@@ -157,10 +161,40 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     bool isDarkMode = theme.brightness == Brightness.dark;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
 
-    return Scaffold(
-      backgroundColor: isDarkMode ? colorScheme.background : Colors.grey[100],
-      appBar: AppBar(
+    return GlassScaffold(
+      backgroundColor: isGlass ? null : (isDarkMode ? colorScheme.surface : Colors.grey[100]),
+      appBar: isGlass
+          ? GlassAppBar(
+              title: const Text('Create Story'),
+              actions: [
+                if (_mediaType == 'text')
+                  IconButton(
+                    icon: Icon(Icons.palette),
+                    tooltip: 'Change background color',
+                    onPressed: () => _showColorPicker(),
+                  ),
+                IconButton(
+                  icon: Icon(_getPrivacyIcon()),
+                  tooltip: 'Story privacy',
+                  onPressed: () => _showPrivacyPicker(),
+                ),
+                TextButton(
+                  onPressed: _isLoading ? null : _createStory,
+                  child: Text(
+                    'Share',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : AppBar(
         title: const Text('Create Story'),
         elevation: 0,
         centerTitle: true,

@@ -224,6 +224,15 @@ class ChatProvider extends ChangeNotifier {
       final lastMessage =
           (data['lastMessage'] ?? '').toString().toLowerCase();
 
+      // Support group chat name search
+      final bool isGroup = data['isGroup'] ?? false;
+      if (isGroup) {
+        final groupName =
+            (data['groupName'] ?? '').toString().toLowerCase();
+        return groupName.contains(lowerQuery) ||
+            lastMessage.contains(lowerQuery);
+      }
+
       final userIds = List<String>.from(data['userIds'] ?? []);
       final otherUserId = userIds.firstWhere(
         (id) => id != currentUid,

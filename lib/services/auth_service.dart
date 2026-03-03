@@ -443,4 +443,109 @@ class AuthService {
       return true; // Assume available on error to not block the user
     }
   }
+
+  // ─── Account Security ─────────────────────────────────────────────────
+
+  /// Change password for the currently authenticated user.
+  /// Requires [currentPassword] for re-authentication and [newPassword] as the new value.
+  Future<void> changePassword(
+      String currentPassword, String newPassword) async {
+    if (_isWindowsWithoutFirebase) {
+      print('⚠️ Windows: simulating password change');
+      await Future.delayed(const Duration(seconds: 1));
+      return;
+    }
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('No authenticated user');
+      if (user.email == null) throw Exception('User has no email address');
+
+      print('🔒 Re-authenticating user for password change...');
+
+      // Re-authenticate the user first
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: currentPassword,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      print('✅ Re-authentication successful, updating password...');
+
+      // Update the password
+      await user.updatePassword(newPassword);
+
+      print('✅ Password changed successfully');
+    } on FirebaseAuthException catch (e) {
+      print('❌ Firebase Auth Error during password change: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Error changing password: $e');
+      rethrow;
+    }
+  }
+
+  /// Delete the current user's account permanently.
+  /// Requires [currentPassword] for re-authentication.
+  /// Deletes the Firestore user document, connections, and Firebase Auth account.
+  Future<void> deleteAccount(String currentPassword) async {
+    if (_isWindowsWithoutFirebase) {
+      print('⚠️ Windows: simulating account deletion');
+      await Future.delayed(const Duration(seconds: 1));
+      return;
+    }
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('No authenticated user');
+      if (user.email == null) throw Exception('User has no email address');
+
+      print('🔒 Re-authenticating user for account deletion...');
+
+      // Re-authenticate first
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: currentPassword,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      print('✅ Re-authentication successful, deleting account data...');
+
+      final uid = user.uid;
+
+      // Delete user's connections (both sent and received)
+      final sentConnections = await _firestore
+          .collection('connections')
+          .where('senderId', isEqualTo: uid)
+          .get();
+      final receivedConnections = await _firestore
+          .collection('connections')
+          .where('receiverId', isEqualTo: uid)
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in sentConnections.docs) {
+        batch.delete(doc.reference);
+      }
+      for (final doc in receivedConnections.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Delete user document from Firestore
+      batch.delete(_firestore.collection('users').doc(uid));
+
+      await batch.commit();
+      print('✅ Firestore data deleted');
+
+      // Finally delete the Firebase Auth account
+      await user.delete();
+      print('✅ Firebase Auth account deleted');
+    } on FirebaseAuthException catch (e) {
+      print('❌ Firebase Auth Error during account deletion: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('❌ Error deleting account: $e');
+      rethrow;
+    }
+  }
 }

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/views/chat/chat_screen.dart';
 import 'package:flutter_chat_app/services/chat_service.dart';
 import 'package:flutter_chat_app/views/user_profile_screen.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class FriendsProfileScreen extends StatefulWidget {
   const FriendsProfileScreen({Key? key}) : super(key: key);
@@ -195,20 +199,35 @@ class _FriendsProfileScreenState extends State<FriendsProfileScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Friends'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add),
-            tooltip: 'Add Friend',
-            onPressed: () {
-              Navigator.pushNamed(context, '/user_list');
-            },
-          ),
-        ],
-      ),
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(
+              title: const Text('Friends'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.person_add),
+                  tooltip: 'Add Friend',
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/user_list');
+                  },
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('Friends'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.person_add),
+                  tooltip: 'Add Friend',
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/user_list');
+                  },
+                ),
+              ],
+            ),
       body: Column(
         children: [
           // Search bar

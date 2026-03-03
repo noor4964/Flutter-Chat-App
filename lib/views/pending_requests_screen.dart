@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class PendingRequestsScreen extends StatefulWidget {
   @override
@@ -80,8 +84,13 @@ class _PendingRequestsScreenState extends State<PendingRequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text("Pending Requests")),
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(title: Text("Pending Requests"))
+          : AppBar(title: Text("Pending Requests")),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _pendingRequestsFuture,
         builder: (context, snapshot) {

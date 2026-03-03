@@ -178,6 +178,7 @@ class FeedService {
   Future<void> addPost({
     required String caption,
     required String imageUrl,
+    List<String> imageUrls = const [],
     String location = '',
     BuildContext? context,
   }) async {
@@ -197,6 +198,7 @@ class FeedService {
         userProfileImage: userData['profileImageUrl'] ?? '',
         caption: caption,
         imageUrl: imageUrl,
+        imageUrls: imageUrls,
         timestamp: DateTime.now(),
         likes: [],
         commentsCount: 0,
@@ -612,6 +614,96 @@ class FeedService {
       _errorController.add(errorMessage);
 
       // Hide loading indicator and show error
+      if (context != null) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 4),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
+      await _errorHandler.handleFirebaseException(e, context);
+      return false;
+    }
+  }
+
+  // Create a post with multiple images (bytes) - full process
+  Future<bool> createPostWithImages({
+    required List<Uint8List> imageBytesList,
+    required String caption,
+    String location = '',
+    BuildContext? context,
+  }) async {
+    if (currentUserId == null) {
+      _errorController.add("You must be logged in to create a post");
+      return false;
+    }
+
+    if (imageBytesList.isEmpty) {
+      _errorController.add("No images selected for post");
+      return false;
+    }
+
+    if (caption.trim().isEmpty) {
+      _errorController.add("Caption cannot be empty");
+      return false;
+    }
+
+    try {
+      if (context != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Uploading images...'),
+              duration: Duration(seconds: 60)),
+        );
+      }
+
+      // Upload all images in parallel
+      final uploadFutures = imageBytesList.asMap().entries.map((entry) {
+        return CloudinaryService.uploadImageBytes(
+          imageBytes: entry.value,
+          preset: CloudinaryService.feedPostPreset,
+          filename: 'post_image_${entry.key}.jpg',
+        );
+      }).toList();
+
+      final List<String> imageUrls = await Future.wait(uploadFutures);
+
+      // Create the post with all image URLs
+      await addPost(
+        caption: caption,
+        imageUrl: imageUrls.first,
+        imageUrls: imageUrls,
+        location: location,
+        context: context,
+      );
+
+      if (context != null) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Post created successfully!'),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.green),
+        );
+      }
+
+      return true;
+    } catch (e) {
+      print('❌ Error creating post with images: $e');
+
+      String errorMessage = "Couldn't create post. Please try again.";
+      if (e.toString().contains('network')) {
+        errorMessage = "Network error. Please check your internet connection.";
+      } else if (e.toString().contains('timed out')) {
+        errorMessage = "Upload timed out. Please try with fewer or smaller images.";
+      }
+
+      _errorController.add(errorMessage);
+
       if (context != null) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/social/news_feed_screen.dart';
 import 'package:flutter_chat_app/views/post/post_create_screen.dart';
@@ -177,9 +180,18 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
     }
 
     // For mobile or small screens, use the traditional layout
-    return Scaffold(
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    return GlassScaffold(
       body: mainContent,
-      bottomNavigationBar: BottomNavigationBar(
+      bottomNavigationBar: isGlass
+          ? GlassBottomNavigationBar(
+              currentIndex: _currentIndex,
+              onTap: (index) => _safeNavigateToIndex(index),
+              items: _buildBottomNavItems(colorScheme),
+            )
+          : BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
           _safeNavigateToIndex(index);
@@ -188,60 +200,7 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         selectedItemColor: colorScheme.primary,
         unselectedItemColor: Colors.grey,
         type: BottomNavigationBarType.fixed,
-        items: [
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.view_list),
-            activeIcon: Icon(Icons.view_list),
-            label: 'Feed',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline),
-            activeIcon: Icon(Icons.chat_bubble),
-            label: 'Chats',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.auto_stories_outlined),
-            activeIcon: Icon(Icons.auto_stories),
-            label: 'Stories',
-          ),
-          BottomNavigationBarItem(
-            icon: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.transparent,
-                  width: 2,
-                ),
-              ),
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: Colors.grey[300],
-                backgroundImage: _getUserProfileImage(),
-                child: _getUserProfileImage() == null
-                    ? Icon(Icons.person, size: 16, color: Colors.grey[600])
-                    : null,
-              ),
-            ),
-            activeIcon: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: colorScheme.primary,
-                  width: 2,
-                ),
-              ),
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: Colors.grey[300],
-                backgroundImage: _getUserProfileImage(),
-                child: _getUserProfileImage() == null
-                    ? Icon(Icons.person, size: 16, color: Colors.grey[600])
-                    : null,
-              ),
-            ),
-            label: 'Profile',
-          ),
-        ],
+        items: _buildBottomNavItems(colorScheme),
       ),
       floatingActionButton: _shouldShowFab()
           ? FloatingActionButton(
@@ -315,11 +274,68 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         (_currentIndex == 2);
   }
 
+  List<BottomNavigationBarItem> _buildBottomNavItems(ColorScheme colorScheme) {
+    return [
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.view_list),
+        activeIcon: Icon(Icons.view_list),
+        label: 'Feed',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.chat_bubble_outline),
+        activeIcon: Icon(Icons.chat_bubble),
+        label: 'Chats',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.auto_stories_outlined),
+        activeIcon: Icon(Icons.auto_stories),
+        label: 'Stories',
+      ),
+      BottomNavigationBarItem(
+        icon: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: CircleAvatar(
+            radius: 14,
+            backgroundColor: Colors.grey[300],
+            backgroundImage: _getUserProfileImage(),
+            child: _getUserProfileImage() == null
+                ? Icon(Icons.person, size: 16, color: Colors.grey[600])
+                : null,
+          ),
+        ),
+        activeIcon: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: colorScheme.primary,
+              width: 2,
+            ),
+          ),
+          child: CircleAvatar(
+            radius: 14,
+            backgroundColor: Colors.grey[300],
+            backgroundImage: _getUserProfileImage(),
+            child: _getUserProfileImage() == null
+                ? Icon(Icons.person, size: 16, color: Colors.grey[600])
+                : null,
+          ),
+        ),
+        label: 'Profile',
+      ),
+    ];
+  }
+
   // Chats Section - Show chat list (web layout is handled in build method)
   Widget _buildChatsSection() {
     return ChatListScreen(
       isDesktop: widget.isDesktop,
-      hideAppBar: true, // We'll handle appbar in this screen
+      hideAppBar: false, // Show AppBar with menu (New Group, Settings, etc.)
     );
   }
 

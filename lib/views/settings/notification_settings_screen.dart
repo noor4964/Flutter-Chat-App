@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/enhanced_notification_service.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
-class NotificationSettingsScreen extends StatefulWidget {
-  const NotificationSettingsScreen({Key? key}) : super(key: key);
+class EnhancedNotificationSettingsScreen extends StatefulWidget {
+  const EnhancedNotificationSettingsScreen({Key? key}) : super(key: key);
 
   @override
-  State<NotificationSettingsScreen> createState() =>
-      _NotificationSettingsScreenState();
+  State<EnhancedNotificationSettingsScreen> createState() =>
+      _EnhancedNotificationSettingsScreenState();
 }
 
-class _NotificationSettingsScreenState
-    extends State<NotificationSettingsScreen> {
+class _EnhancedNotificationSettingsScreenState
+    extends State<EnhancedNotificationSettingsScreen> {
   final EnhancedNotificationService _notificationService = EnhancedNotificationService();
   
   bool _isNotificationsEnabled = true;
@@ -47,14 +51,20 @@ class _NotificationSettingsScreenState
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
     
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notification Settings'),
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 2,
-      ),
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(
+              title: const Text('Notification Settings'),
+            )
+          : AppBar(
+              title: const Text('Notification Settings'),
+              backgroundColor: theme.primaryColor,
+              foregroundColor: Colors.white,
+              elevation: 2,
+            ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

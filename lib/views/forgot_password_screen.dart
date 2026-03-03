@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/auth_provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 import 'package:flutter_chat_app/core/constants.dart';
 import 'package:flutter_chat_app/core/theme.dart';
 import 'package:flutter_chat_app/core/utils.dart';
@@ -54,13 +57,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
     final theme = Theme.of(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Reset Password'),
-        backgroundColor: theme.colorScheme.primary,
-        foregroundColor: Colors.white,
-      ),
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(title: const Text('Reset Password'))
+          : AppBar(
+              title: const Text('Reset Password'),
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: Colors.white,
+            ),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(24.0),

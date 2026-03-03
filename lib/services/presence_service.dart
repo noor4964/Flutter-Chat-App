@@ -2,31 +2,64 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
+import 'package:flutter_chat_app/services/settings_service.dart';
 
 class PresenceService {
   static final PresenceService _instance = PresenceService._internal();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final SettingsService _settingsService = SettingsService();
+
+  bool _appearOffline = false;
 
   // Flag to check if we're on Windows with Firebase disabled
   bool get _isWindowsWithoutFirebase =>
       PlatformHelper.isWindows && !FirebaseConfig.isFirebaseEnabledOnWindows;
 
+  bool get appearOffline => _appearOffline;
+
   factory PresenceService() {
     return _instance;
   }
 
-  PresenceService._internal();
+  PresenceService._internal() {
+    _loadAppearOffline();
+  }
 
-  // Set user as online
+  Future<void> _loadAppearOffline() async {
+    _appearOffline = await _settingsService.isAppearOffline();
+  }
+
+  /// Toggle appear-offline mode. When enabled, goOnline() becomes a no-op
+  /// and the user is immediately set to offline in Firestore.
+  Future<void> setAppearOffline(bool enabled) async {
+    _appearOffline = enabled;
+    await _settingsService.setAppearOffline(enabled);
+    if (enabled) {
+      await _forceGoOffline();
+    } else {
+      await _forceGoOnline();
+    }
+  }
+
+  // Set user as online (respects appear-offline)
   Future<void> goOnline() async {
-    await updateOnlineStatus(true);
+    if (_appearOffline) return; // No-op when invisible
+    await _forceGoOnline();
   }
 
   // Set user as offline
   Future<void> goOffline() async {
-    await updateOnlineStatus(false);
+    await _forceGoOffline();
     await clearActiveChat();
+  }
+
+  Future<void> _forceGoOnline() async {
+    await updateOnlineStatus(true);
+  }
+
+  Future<void> _forceGoOffline() async {
+    await updateOnlineStatus(false);
   }
 
   // Update the user's online status

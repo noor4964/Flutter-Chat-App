@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:flutter_chat_app/providers/feed_provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/widgets/post_card.dart';
 import 'package:flutter_chat_app/widgets/create_post_card.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
 
@@ -91,8 +93,11 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
 
     return Consumer<FeedProvider>(
       builder: (context, feed, _) {
-        return Scaffold(
-          backgroundColor: isDark ? Colors.black : Colors.white,
+        final themeProvider = Provider.of<ThemeProvider>(context);
+        final isGlass = themeProvider.isGlassMode;
+
+        return GlassScaffold(
+          backgroundColor: isGlass ? null : (isDark ? Colors.black : Colors.white),
           body: RefreshIndicator(
             onRefresh: _onRefresh,
             child: _buildBody(feed, theme, colorScheme, isWebLayout, isDark),

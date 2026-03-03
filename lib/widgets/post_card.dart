@@ -109,12 +109,19 @@ class PostCard extends StatelessWidget {
             ),
           ),
 
-          // ── Post image with double-tap-to-like ───────────────────
-          if (post.imageUrl.isNotEmpty)
-            _DoubleTapLikeImage(
-              post: post,
-              onTap: () => _showFullScreenImage(context, post.imageUrl),
-            ),
+          // ── Post image(s) with double-tap-to-like ────────────────
+          if (post.allImageUrls.isNotEmpty)
+            post.isCarousel
+                ? _PostImageCarousel(
+                    post: post,
+                    onImageTap: (index) => _showFullScreenImage(
+                        context, post.allImageUrls, index),
+                  )
+                : _DoubleTapLikeImage(
+                    post: post,
+                    onTap: () =>
+                        _showFullScreenImage(context, post.allImageUrls, 0),
+                  ),
 
           // ── Action icons row ─────────────────────────────────────
           Padding(
@@ -232,35 +239,13 @@ class PostCard extends StatelessWidget {
     );
   }
 
-  void _showFullScreenImage(BuildContext context, String imageUrl) {
+  void _showFullScreenImage(
+      BuildContext context, List<String> imageUrls, int initialIndex) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            iconTheme: const IconThemeData(color: Colors.white),
-          ),
-          extendBodyBehindAppBar: true,
-          body: Center(
-            child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4.0,
-              child: CachedNetworkImage(
-                imageUrl: imageUrl,
-                fit: BoxFit.contain,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(color: Colors.white),
-                ),
-                errorWidget: (context, url, error) => const Icon(
-                  Icons.error,
-                  color: Colors.white,
-                  size: 48,
-                ),
-              ),
-            ),
-          ),
+        builder: (context) => _FullScreenImageViewer(
+          imageUrls: imageUrls,
+          initialIndex: initialIndex,
         ),
       ),
     );
@@ -673,5 +658,282 @@ class _DoubleTapLikeImageState extends State<_DoubleTapLikeImage>
       final feedProvider = Provider.of<FeedProvider>(context, listen: false);
       feedProvider.toggleLike(widget.post.id);
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Post Image Carousel — PageView with dot indicators for multi-image posts
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _PostImageCarousel extends StatefulWidget {
+  final Post post;
+  final Function(int) onImageTap;
+
+  const _PostImageCarousel({
+    Key? key,
+    required this.post,
+    required this.onImageTap,
+  }) : super(key: key);
+
+  @override
+  State<_PostImageCarousel> createState() => _PostImageCarouselState();
+}
+
+class _PostImageCarouselState extends State<_PostImageCarousel>
+    with SingleTickerProviderStateMixin {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  // Heart animation for double-tap-to-like
+  late AnimationController _heartController;
+  late Animation<double> _heartAnimation;
+  bool _showHeart = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _heartController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _heartAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.2), weight: 30),
+      TweenSequenceItem(tween: Tween(begin: 1.2, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.0), weight: 30),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 20),
+    ]).animate(
+        CurvedAnimation(parent: _heartController, curve: Curves.easeOut));
+
+    _heartController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        if (mounted) setState(() => _showHeart = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _heartController.dispose();
+    super.dispose();
+  }
+
+  void _onDoubleTap() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    final alreadyLiked = widget.post.isLikedBy(currentUser.uid);
+
+    setState(() => _showHeart = true);
+    _heartController.forward(from: 0);
+
+    if (!alreadyLiked) {
+      final feedProvider = Provider.of<FeedProvider>(context, listen: false);
+      feedProvider.toggleLike(widget.post.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final imageUrls = widget.post.allImageUrls;
+
+    return Column(
+      children: [
+        // Image carousel
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              height: 400,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: imageUrls.length,
+                onPageChanged: (index) {
+                  setState(() => _currentPage = index);
+                },
+                itemBuilder: (context, index) {
+                  return GestureDetector(
+                    onTap: () => widget.onImageTap(index),
+                    onDoubleTap: _onDoubleTap,
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrls[index],
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 800,
+                      placeholder: (context, url) => Container(
+                        height: 400,
+                        color: isDark
+                            ? const Color(0xFF121212)
+                            : const Color(0xFFF0F0F3),
+                        child: const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        height: 400,
+                        color: isDark
+                            ? const Color(0xFF121212)
+                            : const Color(0xFFF0F0F3),
+                        child: Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: isDark ? Colors.white38 : Colors.grey[400],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            // Counter badge (top-right)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${_currentPage + 1}/${imageUrls.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+
+            // Heart overlay
+            if (_showHeart)
+              ScaleTransition(
+                scale: _heartAnimation,
+                child: const Icon(
+                  Icons.favorite,
+                  color: Colors.white,
+                  size: 80,
+                  shadows: [
+                    Shadow(blurRadius: 20, color: Colors.black54),
+                  ],
+                ),
+              ),
+          ],
+        ),
+
+        // Dot indicators
+        Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              imageUrls.length,
+              (index) => AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: _currentPage == index ? 7 : 5,
+                height: _currentPage == index ? 7 : 5,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _currentPage == index
+                      ? Theme.of(context).colorScheme.primary
+                      : (isDark
+                          ? Colors.white.withOpacity(0.3)
+                          : Colors.grey[350]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Full Screen Image Viewer — supports swiping through carousel images
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _FullScreenImageViewer extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
+
+  const _FullScreenImageViewer({
+    Key? key,
+    required this.imageUrls,
+    this.initialIndex = 0,
+  }) : super(key: key);
+
+  @override
+  State<_FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: widget.imageUrls.length > 1
+            ? Text(
+                '${_currentIndex + 1} / ${widget.imageUrls.length}',
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              )
+            : null,
+        centerTitle: true,
+      ),
+      extendBodyBehindAppBar: true,
+      body: PageView.builder(
+        controller: _pageController,
+        itemCount: widget.imageUrls.length,
+        onPageChanged: (index) {
+          setState(() => _currentIndex = index);
+        },
+        itemBuilder: (context, index) {
+          return Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: CachedNetworkImage(
+                imageUrl: widget.imageUrls[index],
+                fit: BoxFit.contain,
+                placeholder: (context, url) => const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+                errorWidget: (context, url, error) => const Icon(
+                  Icons.error,
+                  color: Colors.white,
+                  size: 48,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }

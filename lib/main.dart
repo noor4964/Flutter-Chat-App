@@ -25,6 +25,7 @@ import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/screens/notification_test_screen.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
+import 'package:flutter_chat_app/widgets/animated_mesh_background.dart';
 
 import 'services/story_service.dart';
 
@@ -166,8 +167,21 @@ class MyApp extends StatelessWidget {
           // Enable error dialogs after app is built
           _errorHandler.suppressDialogs(false);
 
-          // Return the child with error handling
-          return child ?? const SizedBox.shrink();
+          final tp = Provider.of<ThemeProvider>(context);
+          final content = child ?? const SizedBox.shrink();
+
+          // Glass mode: wrap with animated mesh background
+          if (tp.isGlassMode) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimatedMeshBackground(animate: tp.useAnimations),
+                content,
+              ],
+            );
+          }
+
+          return content;
         },
       );
     });

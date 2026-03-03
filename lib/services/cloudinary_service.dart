@@ -111,6 +111,64 @@ class CloudinaryService {
     }
   }
 
+  /// Upload image bytes directly to Cloudinary (works on all platforms).
+  /// Used by the image editor flow where images are processed as bytes.
+  static Future<String> uploadImageBytes({
+    required Uint8List imageBytes,
+    required String preset,
+    String filename = 'edited_image.jpg',
+  }) async {
+    try {
+      String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      print('🔄 Starting Cloudinary bytes upload, preset: $preset');
+
+      var request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
+      request.fields['api_key'] = apiKey;
+      request.fields['timestamp'] = timestamp;
+
+      if (preset != 'direct_upload') {
+        request.fields['upload_preset'] = preset;
+      }
+
+      request.fields['signature'] =
+          _generateSignature(apiSecret, timestamp, preset);
+
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        imageBytes,
+        filename: filename,
+        contentType: MediaType('image', 'jpeg'),
+      ));
+
+      var response = await request.send().timeout(Duration(seconds: 30));
+      var responseData = await http.Response.fromStream(response);
+
+      if (response.statusCode == 200) {
+        var responseJson = json.decode(responseData.body);
+        print('✅ Cloudinary bytes upload successful: ${responseJson['secure_url']}');
+        return responseJson['secure_url'];
+      } else {
+        print('❌ Cloudinary bytes upload failed: ${responseData.body}');
+
+        if (preset != 'direct_upload' &&
+            responseData.body.contains("Upload preset not found")) {
+          print('🔄 Trying direct upload without preset...');
+          return await uploadImageBytes(
+            imageBytes: imageBytes,
+            preset: 'direct_upload',
+            filename: filename,
+          );
+        }
+
+        throw Exception(
+            'Failed to upload image (${response.statusCode}): ${responseData.body}');
+      }
+    } catch (e) {
+      print('❌ Error in CloudinaryService.uploadImageBytes: $e');
+      rethrow;
+    }
+  }
+
   /// Generate a signature for Cloudinary upload
   static String _generateSignature(
       String apiSecret, String timestamp, String uploadPreset) {

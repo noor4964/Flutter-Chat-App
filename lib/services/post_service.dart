@@ -25,6 +25,7 @@ class PostService {
   Future<String?> createPost({
     required String caption,
     required String imageUrl,
+    List<String> imageUrls = const [],
     required PostPrivacy privacy,
     String location = '',
   }) async {
@@ -62,13 +63,19 @@ class PostService {
           break;
       }
 
+      // Build the list of all image URLs
+      final List<String> allUrls = imageUrls.isNotEmpty
+          ? imageUrls
+          : (imageUrl.isNotEmpty ? [imageUrl] : []);
+
       // Create post document
       DocumentReference postRef = await _firestore.collection('posts').add({
         'userId': currentUser.uid,
         'username': userData['username'] ?? 'Anonymous',
         'userProfileImage': userData['profileImageUrl'] ?? '',
         'caption': caption,
-        'imageUrl': imageUrl,
+        'imageUrl': allUrls.isNotEmpty ? allUrls.first : imageUrl,
+        'imageUrls': allUrls,
         'timestamp': FieldValue.serverTimestamp(),
         'likes': [],
         'commentsCount': 0,

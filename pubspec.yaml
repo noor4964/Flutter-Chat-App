@@ -71,12 +71,14 @@ dependencies:
   path: ^1.8.3
   uuid: ^4.3.3
   file_picker: ^6.1.1
+  image_cropper: ^7.0.0
   
   # Location services
   geolocator: ^9.0.2
   
   # UI and formatting
   timeago: ^3.6.1
+  flutter_colorpicker: ^1.0.3
   
   # Added dependencies for Instagram-like feed
   transparent_image: ^2.0.1

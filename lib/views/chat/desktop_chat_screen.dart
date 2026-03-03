@@ -3,6 +3,7 @@ import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/widgets/responsive_layout.dart';
 import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:flutter_chat_app/views/chat/chat_detail_screen.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 
 class DesktopChatScreen extends StatefulWidget {
   const DesktopChatScreen({Key? key}) : super(key: key);
@@ -65,7 +66,7 @@ class _DesktopChatScreenState extends State<DesktopChatScreen> {
     }
 
     // Create a split-view layout for desktop
-    return Scaffold(
+    return GlassScaffold(
       body: ResponsiveLayout.createSplitView(
         context: context,
         leftPanel: ChatListScreen(

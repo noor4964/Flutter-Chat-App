@@ -8,11 +8,14 @@ import 'package:flutter_chat_app/models/message_model.dart';
 import 'package:flutter_chat_app/widgets/modern_message_bubble.dart';
 import 'package:flutter_chat_app/widgets/message_reaction_widgets.dart';
 import 'package:flutter_chat_app/views/user_profile_screen.dart';
+import 'package:flutter_chat_app/views/chat/group_info_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/providers/call_provider.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
@@ -97,6 +100,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   // Keyboard state tracking for consistent scrolling (mobile only)
   double _lastKeyboardHeight = 0.0;
   bool _isKeyboardAnimating = false;
+
+  // Group chat state
+  bool _isGroupChat = false;
+  int _groupMemberCount = 0;
 
   // Block state
   bool _isBlocked = false;       // true if current user blocked the other person
@@ -194,6 +201,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       _isTyping = false;
       _replyingTo = '';
       _messageController.clear();
+      _isGroupChat = false;
+      _groupMemberCount = 0;
 
       // Update person info from new widget params
       if (widget.chatPersonName != null) {
@@ -283,6 +292,22 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           .doc(widget.chatId)
           .get();
       if (chatDoc.exists) {
+        final data = chatDoc.data() as Map<String, dynamic>?;
+
+        // Detect group chat
+        if (data?['isGroup'] == true) {
+          if (mounted) {
+            setState(() {
+              _isGroupChat = true;
+              _chatPersonName = data?['groupName'] ?? 'Group';
+              _chatPersonAvatarUrl = data?['groupImageUrl'];
+              final userIds = data?['userIds'] as List<dynamic>? ?? [];
+              _groupMemberCount = userIds.length;
+            });
+          }
+          return; // Skip 1:1 logic for groups
+        }
+
         List<dynamic> userIds = chatDoc['userIds'];
         String chatPersonId = "";
 
@@ -365,6 +390,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   /// Cache usernames exactly once (not on every build).
   /// Also extracts and stores _chatPersonId, starts typing + online status listeners.
+  /// For group chats, caches ALL member usernames for sender display.
   Future<void> _cacheUsernamesOnce() async {
     if (_usernamesCached || user == null) return;
     _usernamesCached = true;
@@ -374,24 +400,49 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           .doc(widget.chatId)
           .get();
       if (chatDoc.exists) {
+        final data = chatDoc.data() as Map<String, dynamic>?;
+        final isGroup = data?['isGroup'] == true;
         List<dynamic> userIds = chatDoc['userIds'];
-        for (String userId in userIds) {
-          if (userId != user!.uid) {
+
+        if (isGroup) {
+          // Set group state (especially important for web layout where _loadChatPersonDetails is skipped)
+          if (mounted) {
+            setState(() {
+              _isGroupChat = true;
+              _groupMemberCount = userIds.length;
+              if (_chatPersonName == null) {
+                _chatPersonName = data?['groupName'] ?? 'Group';
+              }
+              if (_chatPersonAvatarUrl == null) {
+                _chatPersonAvatarUrl = data?['groupImageUrl'];
+              }
+            });
+          }
+          // For group chats: cache ALL member names (including self for display)
+          for (String userId in userIds) {
             String username = await _chatService.getUsername(userId);
             _usernamesCache[userId] = username;
+          }
+        } else {
+          // For 1:1 chats: cache only the other person
+          for (String userId in userIds) {
+            if (userId != user!.uid) {
+              String username = await _chatService.getUsername(userId);
+              _usernamesCache[userId] = username;
 
-            // Store the chat person ID for reuse (typing, online status, calls)
-            if (_chatPersonId == null) {
-              _chatPersonId = userId;
+              // Store the chat person ID for reuse (typing, online status, calls)
+              if (_chatPersonId == null) {
+                _chatPersonId = userId;
 
-              // Start typing status listener (critical for web where _loadChatPersonDetails is skipped)
-              _listenToTypingStatus(userId);
+                // Start typing status listener (critical for web where _loadChatPersonDetails is skipped)
+                _listenToTypingStatus(userId);
 
-              // Start real-time online status listener
-              _listenToOnlineStatus(userId);
+                // Start real-time online status listener
+                _listenToOnlineStatus(userId);
 
-              // Start block status listener
-              _listenToBlockStatus(userId);
+                // Start block status listener
+                _listenToBlockStatus(userId);
+              }
             }
           }
         }
@@ -445,6 +496,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   void _showChatPersonDetails() {
     if (!mounted) return; // Ensure the widget is still mounted
+    if (_isGroupChat) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => GroupInfoScreen(chatId: widget.chatId),
+        ),
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -563,17 +623,24 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       }
     }
 
-    return Scaffold(
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    return GlassScaffold(
       // Only show AppBar when not hiding header and not in web layout  
       appBar: shouldHideHeader ? null : AppBar(
         elevation: 0,
-        scrolledUnderElevation: 2.0,
-        backgroundColor: theme.brightness == Brightness.dark
-            ? colorScheme.surface
-            : colorScheme.primary,
+        scrolledUnderElevation: isGlass ? 0 : 2.0,
+        backgroundColor: isGlass
+            ? Colors.transparent
+            : theme.brightness == Brightness.dark
+                ? colorScheme.surface
+                : colorScheme.primary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          color: theme.brightness == Brightness.dark ? null : Colors.white,
+          color: isGlass
+              ? Colors.white
+              : theme.brightness == Brightness.dark ? null : Colors.white,
           onPressed: () {
             Navigator.pop(context, true);
           },
@@ -583,6 +650,22 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
           onTap: _showChatPersonDetails,
           child: Row(
             children: [
+              // Avatar: group icon or user avatar
+              if (_isGroupChat)
+                CircleAvatar(
+                  radius: 20,
+                  backgroundImage: _chatPersonAvatarUrl != null
+                      ? NetworkImage(_chatPersonAvatarUrl!)
+                      : null,
+                  backgroundColor: theme.brightness == Brightness.dark
+                      ? colorScheme.primary.withOpacity(0.2)
+                      : Colors.white.withOpacity(0.9),
+                  child: _chatPersonAvatarUrl == null
+                      ? Icon(Icons.group_rounded,
+                          color: colorScheme.primary, size: 22)
+                      : null,
+                )
+              else
               Stack(
                   children: [
                     CircleAvatar(
@@ -637,6 +720,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                             : Colors.white,
                       ),
                     ),
+                    // Subtitle: member count for groups, typing/online for 1:1
+                    if (_isGroupChat)
+                      Text(
+                        '$_groupMemberCount members',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.brightness == Brightness.dark
+                              ? Colors.grey
+                              : Colors.white.withOpacity(0.7),
+                        ),
+                      )
+                    else
                     AnimatedSize(
                       duration: const Duration(milliseconds: 300),
                       child: _isTyping
@@ -671,12 +766,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
         actions: [
           // Connection status indicator for Ajax-type system
           _buildConnectionIndicator(theme),
+          // Hide call buttons for group chats
+          if (!_isGroupChat)
           IconButton(
             icon: const Icon(Icons.call),
             color: theme.brightness == Brightness.dark ? null : Colors.white,
             tooltip: 'Voice Call',
             onPressed: _startAudioCall,
           ),
+          if (!_isGroupChat)
           IconButton(
             icon: const Icon(Icons.videocam),
             color: theme.brightness == Brightness.dark ? null : Colors.white,
@@ -713,11 +811,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'viewContact',
                 child: ListTile(
-                  leading: Icon(Icons.person),
-                  title: Text('View Contact'),
+                  leading: Icon(_isGroupChat ? Icons.group : Icons.person),
+                  title: Text(_isGroupChat ? 'Group Info' : 'View Contact'),
                   contentPadding: EdgeInsets.zero,
                   dense: true,
                 ),
@@ -740,6 +838,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                   dense: true,
                 ),
               ),
+              // Block option only for 1:1 chats
+              if (!_isGroupChat)
               PopupMenuItem(
                 value: 'block',
                 child: ListTile(
@@ -952,6 +1052,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
                                     // Messages for this date - organized by sender
                                     ...messagesForDate.map((message) {
+                                      // System messages (group events) — centered pill
+                                      if (message.type == 'system') {
+                                        return Center(
+                                          child: Container(
+                                            margin: const EdgeInsets.symmetric(vertical: 6),
+                                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: colorScheme.surfaceVariant.withOpacity(0.6),
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              message.text,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontStyle: FontStyle.italic,
+                                                color: colorScheme.onSurfaceVariant,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ),
+                                        );
+                                      }
+
                                       bool isFirstInGroup = true;
 
                                       // Find position in consecutive messages from same sender
@@ -973,9 +1096,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                         isFirstInGroup = timeDiff > 2;
                                       }
 
+                                      // Sender name for group chats (shown above first bubble in a group)
+                                      final senderName = _isGroupChat && !message.isMe && isFirstInGroup
+                                          ? _usernamesCache[message.sender]
+                                          : null;
+
                                       return Material(
                                           color: Colors.transparent,
-                                          child: Row(
+                                          child: Column(
+                                            crossAxisAlignment: message.isMe
+                                                ? CrossAxisAlignment.end
+                                                : CrossAxisAlignment.start,
+                                            children: [
+                                              // Sender name label for group chats
+                                              if (senderName != null)
+                                                Padding(
+                                                  padding: const EdgeInsets.only(left: 48, bottom: 2, top: 6),
+                                                  child: Text(
+                                                    senderName,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: colorScheme.primary,
+                                                    ),
+                                                  ),
+                                                ),
+                                              Row(
                                             mainAxisAlignment: message.isMe
                                                 ? MainAxisAlignment.end
                                                 : MainAxisAlignment.start,
@@ -1064,6 +1210,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                                                     ),
                                                 ),
                                               ),
+                                            ],
+                                          ),
                                             ],
                                           ),
                                       );

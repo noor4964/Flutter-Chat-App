@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/widgets/custom_text_field.dart';
 import 'package:flutter_chat_app/widgets/animations.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
@@ -82,7 +83,7 @@ class _RegisterScreenState extends State<RegisterScreen>
     final borderRadius = themeProvider.borderRadius;
     final isDarkMode = themeProvider.isDarkMode;
 
-    return Scaffold(
+    return GlassScaffold(
       body: Stack(
         children: [
           // Animated background

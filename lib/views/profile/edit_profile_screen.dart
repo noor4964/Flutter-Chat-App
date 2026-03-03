@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,6 +16,7 @@ import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/utils/user_friendly_error_handler.dart';
 import 'package:flutter_chat_app/widgets/common/consistent_ui_components.dart';
 import 'package:flutter_chat_app/widgets/common/loading_overlay.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/widgets/common/navigation_helper.dart';
 import 'package:flutter_chat_app/widgets/common/network_image_with_fallback.dart';
 
@@ -207,20 +209,31 @@ class _EditProfileScreenState extends State<EditProfileScreen>
       );
       if (picked == null) return;
 
-      // Crop to square (for avatar)
-      final cropped = await _cropImage(
-        picked.path,
-        aspectRatioPreset: CropAspectRatioPreset.square,
-        maxSize: 512,
-        isAvatar: true,
-      );
+      setState(() => _isUploadingAvatar = true);
 
-      if (cropped != null) {
-        setState(() => _isUploadingAvatar = true);
+      if (PlatformHelper.isWeb) {
+        final bytes = await picked.readAsBytes();
         await _uploadAndSetImage(
-          cropped: cropped,
+          bytes: bytes,
+          isAvatar: true,
+          filename: picked.name,
+        );
+      } else {
+        // Crop to square (for avatar)
+        final cropped = await _cropImage(
+          picked.path,
+          aspectRatioPreset: CropAspectRatioPreset.square,
+          maxSize: 512,
           isAvatar: true,
         );
+
+        if (cropped != null) {
+          await _uploadAndSetImage(
+            cropped: cropped,
+            isAvatar: true,
+            filename: picked.name,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -244,20 +257,31 @@ class _EditProfileScreenState extends State<EditProfileScreen>
       );
       if (picked == null) return;
 
-      // Crop to 16:9 (for cover)
-      final cropped = await _cropImage(
-        picked.path,
-        aspectRatioPreset: CropAspectRatioPreset.ratio16x9,
-        maxSize: 1200,
-        isAvatar: false,
-      );
+      setState(() => _isUploadingCover = true);
 
-      if (cropped != null) {
-        setState(() => _isUploadingCover = true);
+      if (PlatformHelper.isWeb) {
+        final bytes = await picked.readAsBytes();
         await _uploadAndSetImage(
-          cropped: cropped,
+          bytes: bytes,
+          isAvatar: false,
+          filename: picked.name,
+        );
+      } else {
+        // Crop to 16:9 (for cover)
+        final cropped = await _cropImage(
+          picked.path,
+          aspectRatioPreset: CropAspectRatioPreset.ratio16x9,
+          maxSize: 1200,
           isAvatar: false,
         );
+
+        if (cropped != null) {
+          await _uploadAndSetImage(
+            cropped: cropped,
+            isAvatar: false,
+            filename: picked.name,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -310,15 +334,18 @@ class _EditProfileScreenState extends State<EditProfileScreen>
   }
 
   Future<void> _uploadAndSetImage({
-    required CroppedFile cropped,
+    CroppedFile? cropped,
+    Uint8List? bytes,
     required bool isAvatar,
+    String? filename,
   }) async {
     try {
-      final bytes = await File(cropped.path).readAsBytes();
+      final resolvedBytes = bytes ?? await File(cropped!.path).readAsBytes();
       final url = await CloudinaryService.uploadImageBytes(
-        imageBytes: bytes,
+        imageBytes: resolvedBytes,
         preset: CloudinaryService.profilePicturePreset,
-        filename: isAvatar ? 'profile_avatar.jpg' : 'profile_cover.jpg',
+        filename: filename ??
+            (isAvatar ? 'profile_avatar.jpg' : 'profile_cover.jpg'),
       );
 
       // Persist to Firestore immediately
@@ -536,11 +563,15 @@ class _EditProfileScreenState extends State<EditProfileScreen>
         final shouldPop = await _onWillPop();
         if (shouldPop && mounted) Navigator.of(context).pop();
       },
-      child: Scaffold(
+      child: GlassScaffold(
         appBar: SimplifiedAppBar(
           title: 'Edit Profile',
           actions: [
-            // Save button in app bar
+            if (_hasChanges)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: _buildUnsavedChip(colorScheme),
+              ),
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: AnimatedSwitcher(
@@ -571,10 +602,23 @@ class _EditProfileScreenState extends State<EditProfileScreen>
             ),
           ],
         ),
-        body: LoadingOverlay(
-          isLoading: _isSaving,
-          message: 'Updating profile…',
-          child: _isLoading ? _buildShimmer(colorScheme) : _buildBody(theme),
+        body: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                colorScheme.primaryContainer.withOpacity(0.15),
+                colorScheme.surface,
+              ],
+            ),
+          ),
+          child: LoadingOverlay(
+            isLoading: _isSaving,
+            message: 'Updating profile…',
+            child:
+                _isLoading ? _buildShimmer(colorScheme) : _buildBody(theme),
+          ),
         ),
       ),
     );
@@ -822,103 +866,105 @@ class _EditProfileScreenState extends State<EditProfileScreen>
 
   Widget _buildHeaderSection(ColorScheme colorScheme, bool isDark) {
     return SizedBox(
-      height: 250,
+      height: 270,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // Cover photo
+          // Cover photo area with rounded bottom
           GestureDetector(
             onTap: _isUploadingCover ? null : _pickCover,
-            child: Stack(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 180,
-                  child: _coverImageUrl != null && _coverImageUrl!.isNotEmpty
-                      ? NetworkImageWithFallback(
-                          imageUrl: _coverImageUrl,
-                          width: double.infinity,
-                          height: 180,
-                          fit: BoxFit.cover,
-                        )
-                      : Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                colorScheme.primary.withOpacity(0.6),
-                                colorScheme.secondary.withOpacity(0.4),
-                                colorScheme.tertiary.withOpacity(0.3),
-                              ],
+            child: ClipRRect(
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(28),
+                bottomRight: Radius.circular(28),
+              ),
+              child: Stack(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 200,
+                    child: _coverImageUrl != null &&
+                            _coverImageUrl!.isNotEmpty
+                        ? NetworkImageWithFallback(
+                            imageUrl: _coverImageUrl,
+                            width: double.infinity,
+                            height: 200,
+                            fit: BoxFit.cover,
+                          )
+                        : Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  colorScheme.primary.withOpacity(0.65),
+                                  colorScheme.secondary.withOpacity(0.55),
+                                  colorScheme.tertiary.withOpacity(0.45),
+                                ],
+                              ),
                             ),
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.add_photo_alternate_outlined,
-                                  size: 36,
-                                  color: Colors.white.withOpacity(0.7),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Add Cover Photo',
-                                  style: TextStyle(
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.add_photo_alternate_outlined,
+                                    size: 40,
                                     color: Colors.white.withOpacity(0.8),
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Add Cover Photo',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.9),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                ),
-
-                // Dark gradient overlay at bottom of cover
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: 60,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          (isDark ? Colors.black : Colors.white)
-                              .withOpacity(0.5),
-                        ],
-                      ),
-                    ),
                   ),
-                ),
 
-                // Cover edit button
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: _buildCoverEditBadge(colorScheme),
-                ),
-
-                // Cover upload indicator
-                if (_isUploadingCover)
+                  // Soft overlay
                   Positioned.fill(
                     child: Container(
-                      color: Colors.black45,
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.08),
+                            Colors.black.withOpacity(0.25),
+                          ],
                         ),
                       ),
                     ),
                   ),
-              ],
+
+                  // Cover edit button
+                  Positioned(
+                    top: 14,
+                    right: 14,
+                    child: _buildCoverEditBadge(colorScheme),
+                  ),
+
+                  // Cover upload indicator
+                  if (_isUploadingCover)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black45,
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
 
@@ -932,12 +978,26 @@ class _EditProfileScreenState extends State<EditProfileScreen>
                 onTap: _isUploadingAvatar ? null : _pickAvatar,
                 child: Stack(
                   children: [
-                    // Avatar circle
+                    // Glow ring when there are unsaved changes
+                    if (_hasChanges)
+                      Container(
+                        width: 126,
+                        height: 126,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              colorScheme.primary.withOpacity(0.45),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
                     Hero(
                       tag: 'profile-avatar',
                       child: Container(
-                        width: 110,
-                        height: 110,
+                        width: 118,
+                        height: 118,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
@@ -946,9 +1006,9 @@ class _EditProfileScreenState extends State<EditProfileScreen>
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
+                              color: Colors.black.withOpacity(0.16),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
                             ),
                           ],
                         ),
@@ -957,15 +1017,15 @@ class _EditProfileScreenState extends State<EditProfileScreen>
                                   _profileImageUrl!.isNotEmpty
                               ? NetworkImageWithFallback(
                                   imageUrl: _profileImageUrl,
-                                  width: 110,
-                                  height: 110,
+                                  width: 118,
+                                  height: 118,
                                   fit: BoxFit.cover,
                                 )
                               : Container(
                                   color: colorScheme.primaryContainer,
                                   child: Icon(
                                     Icons.person,
-                                    size: 50,
+                                    size: 56,
                                     color: colorScheme.onPrimaryContainer,
                                   ),
                                 ),
@@ -975,11 +1035,11 @@ class _EditProfileScreenState extends State<EditProfileScreen>
 
                     // Camera overlay
                     Positioned(
-                      bottom: 0,
-                      right: 0,
+                      bottom: 2,
+                      right: 2,
                       child: Container(
-                        width: 36,
-                        height: 36,
+                        width: 38,
+                        height: 38,
                         decoration: BoxDecoration(
                           color: colorScheme.primary,
                           shape: BoxShape.circle,
@@ -989,9 +1049,9 @@ class _EditProfileScreenState extends State<EditProfileScreen>
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
+                              color: Colors.black.withOpacity(0.18),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
                             ),
                           ],
                         ),
@@ -1054,30 +1114,35 @@ class _EditProfileScreenState extends State<EditProfileScreen>
     required String title,
     required List<Widget> children,
   }) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
       margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: isDark
-            ? colorScheme.surfaceContainerHighest.withOpacity(0.4)
-            : colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colorScheme.surface.withOpacity(isDark ? 0.9 : 0.92),
+            colorScheme.surfaceVariant.withOpacity(isDark ? 0.45 : 0.55),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(0.3),
+          color: colorScheme.outlineVariant.withOpacity(0.35),
         ),
         boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 12,
-              offset: const Offset(0, 2),
-            ),
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.18 : 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
         ],
       ),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           initiallyExpanded: true,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           childrenPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
                   .copyWith(top: 0, bottom: 20),
@@ -1094,11 +1159,43 @@ class _EditProfileScreenState extends State<EditProfileScreen>
             title,
             style: TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
               color: colorScheme.onSurface,
             ),
           ),
           children: children,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUnsavedChip(ColorScheme colorScheme) {
+    return AnimatedOpacity(
+      opacity: _hasChanges ? 1 : 0,
+      duration: const Duration(milliseconds: 200),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: colorScheme.tertiaryContainer.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withOpacity(0.4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.bolt, color: colorScheme.onTertiaryContainer, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              'Unsaved',
+              style: TextStyle(
+                color: colorScheme.onTertiaryContainer,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ],
         ),
       ),
     );

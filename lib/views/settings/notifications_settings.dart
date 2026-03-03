@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/notification_service.dart';
 import 'package:flutter_chat_app/widgets/custom_button.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({Key? key}) : super(key: key);
@@ -34,10 +38,17 @@ class _NotificationSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notification Settings'),
-      ),
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(
+              title: const Text('Notification Settings'),
+            )
+          : AppBar(
+              title: const Text('Notification Settings'),
+            ),
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [

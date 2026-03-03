@@ -11,6 +11,10 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:transparent_image/transparent_image.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   final String chatId;
@@ -622,106 +626,118 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Container(
-          constraints: const BoxConstraints(maxWidth: double.infinity),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Profile Image
-              CircleAvatar(
-                radius: 18,
-                backgroundImage: widget.profileImageUrl != null &&
-                        widget.profileImageUrl!.isNotEmpty
-                    ? NetworkImage(widget.profileImageUrl!)
-                    : null,
-                child: widget.profileImageUrl == null ||
-                        widget.profileImageUrl!.isEmpty
-                    ? Text(
-                        widget.chatName.isNotEmpty
-                            ? widget.chatName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 12),
-              // Name and Status
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.chatName,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    Text(
-                      'Tap to view info',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
+
+    final _appBarTitle = Container(
+      constraints: const BoxConstraints(maxWidth: double.infinity),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Profile Image
+          CircleAvatar(
+            radius: 18,
+            backgroundImage: widget.profileImageUrl != null &&
+                    widget.profileImageUrl!.isNotEmpty
+                ? NetworkImage(widget.profileImageUrl!)
+                : null,
+            child: widget.profileImageUrl == null ||
+                    widget.profileImageUrl!.isEmpty
+                ? Text(
+                    widget.chatName.isNotEmpty
+                        ? widget.chatName[0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  )
+                : null,
           ),
-        ),
-        titleSpacing: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.info_outline),
-            onPressed: () {
-              // Show chat info dialog
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: Text('Chat with ${widget.chatName}'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (widget.profileImageUrl != null &&
-                          widget.profileImageUrl!.isNotEmpty) ...[
-                        Center(
-                          child: CircleAvatar(
-                            radius: 40,
-                            backgroundImage:
-                                NetworkImage(widget.profileImageUrl!),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                      Text('Name: ${widget.chatName}'),
-                      const SizedBox(height: 8),
-                      Text('Status: ${widget.isOnline ? "Online" : "Offline"}'),
-                      const SizedBox(height: 8),
-                      Text('Chat ID: ${widget.chatId}'),
-                    ],
+          const SizedBox(width: 12),
+          // Name and Status
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.chatName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Close'),
-                    ),
-                  ],
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-              );
-            },
+                Text(
+                  'Tap to view info',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
+    );
+
+    final _appBarActions = <Widget>[
+      IconButton(
+        icon: const Icon(Icons.info_outline),
+        onPressed: () {
+          // Show chat info dialog
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Chat with ${widget.chatName}'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.profileImageUrl != null &&
+                      widget.profileImageUrl!.isNotEmpty) ...[
+                    Center(
+                      child: CircleAvatar(
+                        radius: 40,
+                        backgroundImage:
+                            NetworkImage(widget.profileImageUrl!),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  Text('Name: ${widget.chatName}'),
+                  const SizedBox(height: 8),
+                  Text('Status: ${widget.isOnline ? "Online" : "Offline"}'),
+                  const SizedBox(height: 8),
+                  Text('Chat ID: ${widget.chatId}'),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    ];
+
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(
+              title: _appBarTitle,
+              actions: _appBarActions,
+            )
+          : AppBar(
+              title: _appBarTitle,
+              titleSpacing: 0,
+              actions: _appBarActions,
+            ),
       body: Column(
         children: [
           // Typing indicator (shows when other user is typing)

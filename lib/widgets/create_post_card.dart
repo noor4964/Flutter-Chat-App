@@ -1,11 +1,12 @@
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_chat_app/models/post_model.dart';
 import 'package:flutter_chat_app/services/post_service.dart';
+import 'package:flutter_chat_app/services/cloudinary_service.dart';
+import 'package:flutter_chat_app/views/post/image_editor_screen.dart';
 
 class CreatePostCard extends StatefulWidget {
   const CreatePostCard({Key? key}) : super(key: key);
@@ -22,10 +23,12 @@ class _CreatePostCardState extends State<CreatePostCard> {
 
   bool _isExpanded = false;
   bool _isPosting = false;
-  File? _selectedImage;
+  List<Uint8List> _selectedImages = [];
   PostPrivacy _selectedPrivacy = PostPrivacy.public;
   String _userName = '';
   String _userProfileImage = '';
+
+  static const int _maxImages = 10;
 
   @override
   void initState() {
@@ -62,37 +65,56 @@ class _CreatePostCardState extends State<CreatePostCard> {
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    if (_selectedImages.length >= _maxImages) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Maximum $_maxImages images allowed')),
+      );
+      return;
+    }
 
-    if (pickedFile != null) {
-      setState(() {
-        _selectedImage = File(pickedFile.path);
-        _isExpanded = true;
-      });
+    final picker = ImagePicker();
+    final pickedFiles = await picker.pickMultiImage(
+      imageQuality: 85,
+      maxWidth: 1920,
+      maxHeight: 1920,
+    );
+
+    if (pickedFiles.isEmpty) return;
+
+    final remaining = _maxImages - _selectedImages.length;
+    final filesToProcess = pickedFiles.take(remaining).toList();
+
+    for (final file in filesToProcess) {
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+
+      final edited = await Navigator.of(context).push<Uint8List>(
+        MaterialPageRoute(
+          builder: (_) => ImageEditorScreen(imageBytes: bytes),
+        ),
+      );
+
+      if (edited != null && mounted) {
+        setState(() {
+          _selectedImages.add(edited);
+          _isExpanded = true;
+        });
+      }
     }
   }
 
-  Future<String?> _uploadImage() async {
-    if (_selectedImage == null) return null;
+  Future<List<String>> _uploadImages() async {
+    if (_selectedImages.isEmpty) return [];
 
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return null;
+    final uploadFutures = _selectedImages.asMap().entries.map((entry) {
+      return CloudinaryService.uploadImageBytes(
+        imageBytes: entry.value,
+        preset: CloudinaryService.feedPostPreset,
+        filename: 'post_image_${entry.key}.jpg',
+      );
+    }).toList();
 
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('post_images')
-          .child('${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-
-      final uploadTask = storageRef.putFile(_selectedImage!);
-      final snapshot = await uploadTask;
-
-      return await snapshot.ref.getDownloadURL();
-    } catch (e) {
-      print('Error uploading image: $e');
-      return null;
-    }
+    return await Future.wait(uploadFutures);
   }
 
   Future<void> _createPost() async {
@@ -101,7 +123,7 @@ class _CreatePostCardState extends State<CreatePostCard> {
     final caption = _captionController.text.trim();
     final location = _locationController.text.trim();
 
-    if (caption.isEmpty && _selectedImage == null) {
+    if (caption.isEmpty && _selectedImages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('Add a caption or image to create a post')),
@@ -114,14 +136,15 @@ class _CreatePostCardState extends State<CreatePostCard> {
     });
 
     try {
-      String? imageUrl;
-      if (_selectedImage != null) {
-        imageUrl = await _uploadImage();
+      List<String> imageUrls = [];
+      if (_selectedImages.isNotEmpty) {
+        imageUrls = await _uploadImages();
       }
 
       await _postService.createPost(
         caption: caption,
-        imageUrl: imageUrl ?? '',
+        imageUrl: imageUrls.isNotEmpty ? imageUrls.first : '',
+        imageUrls: imageUrls,
         privacy: _selectedPrivacy,
         location: location,
       );
@@ -130,7 +153,7 @@ class _CreatePostCardState extends State<CreatePostCard> {
       setState(() {
         _captionController.clear();
         _locationController.clear();
-        _selectedImage = null;
+        _selectedImages.clear();
         _isExpanded = false;
         _selectedPrivacy = PostPrivacy.public;
       });
@@ -285,43 +308,55 @@ class _CreatePostCardState extends State<CreatePostCard> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-              if (_selectedImage != null) ...[
+              if (_selectedImages.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.file(
-                        _selectedImage!,
-                        width: double.infinity,
-                        height: 200,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedImage = null;
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.close,
-                            color: Colors.white,
-                            size: 20,
-                          ),
+                SizedBox(
+                  height: 100,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _selectedImages.length,
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.memory(
+                                _selectedImages[index],
+                                width: 100,
+                                height: 100,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedImages.removeAt(index);
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.close,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                  ],
+                      );
+                    },
+                  ),
                 ),
               ],
               const SizedBox(height: 12),
@@ -360,7 +395,7 @@ class _CreatePostCardState extends State<CreatePostCard> {
                       setState(() {
                         _captionController.clear();
                         _locationController.clear();
-                        _selectedImage = null;
+                        _selectedImages.clear();
                         _isExpanded = false;
                         _selectedPrivacy = PostPrivacy.public;
                       });

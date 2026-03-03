@@ -5,12 +5,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/chat_provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/profile/edit_profile_screen.dart';
 import 'package:flutter_chat_app/views/settings/settings_screen.dart';
 import 'package:flutter_chat_app/views/pending_requests_screen.dart';
 import 'chat_screen.dart';
+import 'create_group_screen.dart';
 import 'package:flutter/gestures.dart'
     show DragStartBehavior, PointerDeviceKind;
 
@@ -170,7 +174,7 @@ class _ChatListScreenState extends State<ChatListScreen>
         }
 
         if (currentUser == null) {
-          return Scaffold(
+          return GlassScaffold(
             body: Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -239,29 +243,10 @@ class _ChatListScreenState extends State<ChatListScreen>
         }
 
         final filteredChats = chatDocs;
+        final themeProvider = Provider.of<ThemeProvider>(context);
+        final isGlass = themeProvider.isGlassMode;
 
-        return Scaffold(
-          backgroundColor: Theme.of(context).brightness == Brightness.dark
-              ? colorScheme.surface
-              : const Color(0xFFFAFAFA),
-          appBar: widget.hideAppBar
-              ? null
-              : AppBar(
-                  backgroundColor: Theme.of(context).brightness == Brightness.dark
-                      ? colorScheme.surface
-                      : Colors.white,
-                  elevation: 0,
-                  scrolledUnderElevation: 0.5,
-                  surfaceTintColor: Colors.transparent,
-                  title: Text(
-                    widget.isDesktop ? 'Conversations' : 'Chats',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 24,
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  actions: [
+        final appBarActions = <Widget>[
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       tooltip: 'Menu',
@@ -272,6 +257,13 @@ class _ChatListScreenState extends State<ChatListScreen>
                               context,
                               MaterialPageRoute(
                                   builder: (context) => const EditProfileScreen()),
+                            );
+                            break;
+                          case 'new_group':
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (context) => const CreateGroupScreen()),
                             );
                             break;
                           case 'settings':
@@ -317,6 +309,23 @@ class _ChatListScreenState extends State<ChatListScreen>
                               child: const Icon(Icons.person),
                             ),
                             title: const Text('Profile'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'new_group',
+                          child: ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.group_add_rounded),
+                            ),
+                            title: const Text('New Group'),
                             dense: true,
                             visualDensity: VisualDensity.compact,
                           ),
@@ -433,8 +442,40 @@ class _ChatListScreenState extends State<ChatListScreen>
                           ),
                       ],
                     ),
-                  ],
-                ),
+        ];
+
+        return GlassScaffold(
+          appBar: widget.hideAppBar
+              ? null
+              : isGlass
+                  ? GlassAppBar(
+                      title: Text(
+                        widget.isDesktop ? 'Conversations' : 'Chats',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 24,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      actions: appBarActions,
+                    )
+                  : AppBar(
+                      backgroundColor: Theme.of(context).brightness == Brightness.dark
+                          ? colorScheme.surface
+                          : Colors.white,
+                      elevation: 0,
+                      scrolledUnderElevation: 0.5,
+                      surfaceTintColor: Colors.transparent,
+                      title: Text(
+                        widget.isDesktop ? 'Conversations' : 'Chats',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 24,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      actions: appBarActions,
+                    ),
           drawer: !widget.isDesktop
               ? Drawer(
                   child: Column(
@@ -491,16 +532,20 @@ class _ChatListScreenState extends State<ChatListScreen>
               Container(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? colorScheme.surface
-                      : Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  color: isGlass
+                      ? Colors.transparent
+                      : Theme.of(context).brightness == Brightness.dark
+                          ? colorScheme.surface
+                          : Colors.white,
+                  boxShadow: isGlass
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.03),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                 ),
                 child: TextField(
                   controller: _searchController,
@@ -737,28 +782,38 @@ class _ChatListScreenState extends State<ChatListScreen>
       return _buildChatShimmer();
     }
 
-    final otherUserId = userIds.firstWhere(
-      (id) => id != currentUserId,
-      orElse: () => '',
-    );
+    // ── Group chat handling ──────────────────────────────────────────
+    final bool isGroup = chatData['isGroup'] == true;
+    String chatName;
+    String profileImageUrl;
 
-    // Get user info from provider cache or show shimmer while loading
-    final chatProvider = context.read<ChatProvider>();
-    Map<String, String>? userInfo;
-    if (otherUserId.isNotEmpty) {
-      userInfo = chatProvider.getCachedUserInfo(otherUserId);
-    }
+    if (isGroup) {
+      chatName = chatData['groupName'] ?? 'Group Chat';
+      profileImageUrl = chatData['groupImageUrl'] ?? '';
+    } else {
+      final otherUserId = userIds.firstWhere(
+        (id) => id != currentUserId,
+        orElse: () => '',
+      );
 
-    if (userInfo == null) {
-      // Start loading user info if not in cache
+      // Get user info from provider cache or show shimmer while loading
+      final chatProvider = context.read<ChatProvider>();
+      Map<String, String>? userInfo;
       if (otherUserId.isNotEmpty) {
-        chatProvider.fetchUserInfo(otherUserId);
+        userInfo = chatProvider.getCachedUserInfo(otherUserId);
       }
-      return _buildChatShimmer();
-    }
 
-    final chatName = userInfo['name'] ?? 'Unknown';
-    final profileImageUrl = userInfo['profileImageUrl'] ?? '';
+      if (userInfo == null) {
+        // Start loading user info if not in cache
+        if (otherUserId.isNotEmpty) {
+          chatProvider.fetchUserInfo(otherUserId);
+        }
+        return _buildChatShimmer();
+      }
+
+      chatName = userInfo['name'] ?? 'Unknown';
+      profileImageUrl = userInfo['profileImageUrl'] ?? '';
+    }
     
     bool isRead = false;
     if (chatData['lastMessageReadBy'] != null) {
@@ -917,14 +972,20 @@ class _ChatListScreenState extends State<ChatListScreen>
                               ? NetworkImage(profileImageUrl)
                               : null,
                           child: profileImageUrl.isEmpty
-                              ? Text(
-                                  chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
-                                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                                  ),
-                                )
+                              ? (isGroup
+                                  ? Icon(
+                                      Icons.group_rounded,
+                                      size: 24,
+                                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                    )
+                                  : Text(
+                                      chatName.isNotEmpty ? chatName[0].toUpperCase() : '?',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                      ),
+                                    ))
                               : null,
                         ),
                       ),

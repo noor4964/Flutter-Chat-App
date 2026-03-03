@@ -19,6 +19,10 @@ import 'package:flutter_chat_app/views/create_story_screen.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
 import 'package:flutter_chat_app/views/post/post_create_screen.dart';
 import 'package:flutter_chat_app/widgets/post_card.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 /// Instagram-style profile tab with story highlights, tabbed post views,
 /// engagement stats, online indicator, and comprehensive settings.
@@ -232,16 +236,18 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colorScheme = theme.colorScheme;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
 
     if (_isLoading) {
-      return Scaffold(
-        backgroundColor: isDark ? Colors.black : Colors.white,
+      return GlassScaffold(
+        backgroundColor: isGlass ? null : (isDark ? Colors.black : Colors.white),
         body: _buildSkeleton(isDark),
       );
     }
 
-    return Scaffold(
-      backgroundColor: isDark ? Colors.black : Colors.white,
+    return GlassScaffold(
+      backgroundColor: isGlass ? null : (isDark ? Colors.black : Colors.white),
       body: RefreshIndicator(
         onRefresh: _refresh,
         color: colorScheme.primary,
@@ -249,7 +255,34 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
           headerSliverBuilder: (context, innerBoxIsScrolled) {
             return [
               // ── App bar ────────────────────────────────────
-              SliverAppBar(
+              isGlass
+                  ? GlassSliverAppBar(
+                      title: Text(
+                        _username.isNotEmpty ? _username : 'Profile',
+                      ),
+                      actions: [
+                        IconButton(
+                          icon: const Icon(Icons.add_box_outlined),
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              PageRouteBuilder(
+                                opaque: false,
+                                pageBuilder: (context, _, __) => PostCreateScreen(),
+                              ),
+                            ).then((_) => _loadPosts());
+                          },
+                          splashRadius: 22,
+                          tooltip: 'Create post',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.menu),
+                          onPressed: () => _showSettingsSheet(context),
+                          splashRadius: 22,
+                          tooltip: 'Settings',
+                        ),
+                      ],
+                    )
+                  : SliverAppBar(
                 floating: true,
                 snap: true,
                 elevation: 0,

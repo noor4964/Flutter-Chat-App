@@ -13,11 +13,12 @@ class Post {
   final String userProfileImage;
   final String caption;
   final String imageUrl;
+  final List<String> imageUrls;
   final DateTime timestamp;
   final List<String> likes;
   final int commentsCount;
   final String location;
-  final PostPrivacy privacy; // New field for privacy setting
+  final PostPrivacy privacy;
 
   Post({
     required this.id,
@@ -26,12 +27,24 @@ class Post {
     required this.userProfileImage,
     required this.caption,
     required this.imageUrl,
+    this.imageUrls = const [],
     required this.timestamp,
     required this.likes,
     required this.commentsCount,
     this.location = '',
-    this.privacy = PostPrivacy.public, // Default to public
+    this.privacy = PostPrivacy.public,
   });
+
+  /// Returns the full list of image URLs, handling backward compatibility.
+  /// If imageUrls is populated, use it. Otherwise fall back to single imageUrl.
+  List<String> get allImageUrls {
+    if (imageUrls.isNotEmpty) return imageUrls;
+    if (imageUrl.isNotEmpty) return [imageUrl];
+    return [];
+  }
+
+  /// Whether this post has multiple images (carousel).
+  bool get isCarousel => allImageUrls.length > 1;
 
   bool isLikedBy(String userId) {
     return likes.contains(userId);
@@ -39,7 +52,7 @@ class Post {
 
   factory Post.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     // Convert string privacy setting to enum
     PostPrivacy privacySetting = PostPrivacy.public;
     if (data['privacy'] != null) {
@@ -55,7 +68,13 @@ class Post {
           break;
       }
     }
-    
+
+    // Read imageUrls list if present, otherwise empty
+    List<String> imageUrlsList = [];
+    if (data['imageUrls'] != null) {
+      imageUrlsList = List<String>.from(data['imageUrls']);
+    }
+
     return Post(
       id: doc.id,
       userId: data['userId'] ?? '',
@@ -63,7 +82,10 @@ class Post {
       userProfileImage: data['userProfileImage'] ?? '',
       caption: data['caption'] ?? '',
       imageUrl: data['imageUrl'] ?? '',
-      timestamp: (data['timestamp'] as Timestamp).toDate(),
+      imageUrls: imageUrlsList,
+      timestamp: data['timestamp'] != null
+          ? (data['timestamp'] as Timestamp).toDate()
+          : DateTime.now(),
       likes: List<String>.from(data['likes'] ?? []),
       commentsCount: data['commentsCount'] ?? 0,
       location: data['location'] ?? '',
@@ -85,13 +107,18 @@ class Post {
         privacyString = 'private';
         break;
     }
-    
+
+    // For backward compat: imageUrl stores the first image,
+    // imageUrls stores the full list
+    final urls = allImageUrls;
+
     return {
       'userId': userId,
       'username': username,
       'userProfileImage': userProfileImage,
       'caption': caption,
-      'imageUrl': imageUrl,
+      'imageUrl': urls.isNotEmpty ? urls.first : imageUrl,
+      'imageUrls': urls,
       'timestamp': Timestamp.fromDate(timestamp),
       'likes': likes,
       'commentsCount': commentsCount,
@@ -107,6 +134,7 @@ class Post {
     String? userProfileImage,
     String? caption,
     String? imageUrl,
+    List<String>? imageUrls,
     DateTime? timestamp,
     List<String>? likes,
     int? commentsCount,
@@ -120,6 +148,7 @@ class Post {
       userProfileImage: userProfileImage ?? this.userProfileImage,
       caption: caption ?? this.caption,
       imageUrl: imageUrl ?? this.imageUrl,
+      imageUrls: imageUrls ?? this.imageUrls,
       timestamp: timestamp ?? this.timestamp,
       likes: likes ?? this.likes,
       commentsCount: commentsCount ?? this.commentsCount,

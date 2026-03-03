@@ -3,8 +3,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:flutter_chat_app/providers/call_provider.dart';
+import 'package:flutter_chat_app/providers/theme_provider.dart';
 import 'package:flutter_chat_app/services/calls/call_service.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
+import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
+import 'package:flutter_chat_app/widgets/glass_container.dart';
 
 class CallHistoryScreen extends StatefulWidget {
   const CallHistoryScreen({Key? key}) : super(key: key);
@@ -26,16 +29,20 @@ class _CallHistoryScreenState extends State<CallHistoryScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isGlass = themeProvider.isGlassMode;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Call History'),
-        backgroundColor: theme.brightness == Brightness.dark
-            ? colorScheme.surface
-            : colorScheme.primary,
-        foregroundColor:
-            theme.brightness == Brightness.dark ? null : Colors.white,
-      ),
+    return GlassScaffold(
+      appBar: isGlass
+          ? GlassAppBar(title: const Text('Call History'))
+          : AppBar(
+              title: const Text('Call History'),
+              backgroundColor: theme.brightness == Brightness.dark
+                  ? colorScheme.surface
+                  : colorScheme.primary,
+              foregroundColor:
+                  theme.brightness == Brightness.dark ? null : Colors.white,
+            ),
       body: Consumer<CallProvider>(
         builder: (context, callProvider, child) {
           if (callProvider.isLoadingHistory) {
