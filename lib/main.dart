@@ -6,6 +6,7 @@ import 'package:flutter_chat_app/providers/auth_provider.dart' as app_provider;
 import 'package:flutter_chat_app/providers/chat_provider.dart';
 import 'package:flutter_chat_app/providers/call_provider.dart';
 import 'package:flutter_chat_app/providers/feed_provider.dart';
+import 'package:flutter_chat_app/providers/notification_provider.dart';
 import 'package:flutter_chat_app/services/feed_service.dart';
 import 'package:flutter_chat_app/services/firebase_config.dart';
 import 'package:flutter_chat_app/services/firebase_error_handler.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_chat_app/services/notification_service.dart';
 import 'package:flutter_chat_app/services/enhanced_notification_service.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
 import 'package:flutter_chat_app/services/presence_service.dart';
+import 'package:flutter_chat_app/services/settings_service.dart';
 import 'package:flutter_chat_app/views/auth/login_screen.dart';
 import 'package:flutter_chat_app/views/chat/desktop_chat_screen.dart';
 import 'package:flutter_chat_app/services/navigator_observer.dart';
@@ -26,6 +28,7 @@ import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/screens/notification_test_screen.dart';
 import 'package:flutter_chat_app/views/calls/audio_call_screen.dart';
 import 'package:flutter_chat_app/widgets/animated_mesh_background.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'services/story_service.dart';
 
@@ -34,6 +37,17 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Pre-load SharedPreferences BEFORE anything else so theme is ready
+  // synchronously when ThemeProvider is constructed. This eliminates the
+  // flash of default light theme on web page refresh.
+  Map<String, dynamic>? themePrefs;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    themePrefs = SettingsService.readThemePrefsSync(prefs);
+  } catch (e) {
+    debugPrint('main: failed to pre-load SharedPreferences: $e');
+  }
 
   // Initialize Firebase with error handling
   try {
@@ -67,7 +81,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (context) => ThemeProvider()),
+        ChangeNotifierProvider(create: (context) => ThemeProvider(initialPrefs: themePrefs)),
         ChangeNotifierProvider(
             create: (context) => app_provider.AuthProvider()),
         ChangeNotifierProvider(create: (context) {
@@ -84,6 +98,11 @@ void main() async {
           final callProvider = CallProvider();
           callProvider.initialize();
           return callProvider;
+        }),
+        ChangeNotifierProvider(create: (context) {
+          final notificationProvider = NotificationProvider();
+          notificationProvider.initialize();
+          return notificationProvider;
         }),
       ],
       child: MyApp(),

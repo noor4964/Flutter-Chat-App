@@ -120,18 +120,11 @@ class SettingsService {
     await prefs.setBool(_isDarkModeKey, enabled);
   }
 
-  // Theme style (light/dark) - supersedes isDarkMode for new UI
+  // Theme style (light/dark/glass) - supersedes isDarkMode for new UI
   Future<String> getThemeStyle() async {
     final prefs = await SharedPreferences.getInstance();
     final style = prefs.getString(_themeStyleKey);
     if (style != null) {
-      // Migration: if stored value is 'glass' from old version,
-      // treat as 'light' and enable liquid glass
-      if (style == 'glass') {
-        await prefs.setString(_themeStyleKey, 'light');
-        await prefs.setBool(_liquidGlassEnabledKey, true);
-        return 'light';
-      }
       return style;
     }
     // Fallback to legacy dark mode check
@@ -308,6 +301,34 @@ class SettingsService {
   Future<void> setBackupFrequency(String frequency) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_backupFrequencyKey, frequency);
+  }
+
+  /// Read all theme-related preferences synchronously from an already-loaded
+  /// SharedPreferences instance. Called from main() before runApp() so the
+  /// theme is available on the first frame without async gaps.
+  static Map<String, dynamic> readThemePrefsSync(SharedPreferences prefs) {
+    String themeStyle;
+    final storedStyle = prefs.getString(_themeStyleKey);
+    if (storedStyle != null) {
+      themeStyle = storedStyle;
+    } else {
+      final isDark = prefs.getBool(_isDarkModeKey) ?? false;
+      themeStyle = isDark ? 'dark' : 'light';
+    }
+
+    return {
+      'themeStyle': themeStyle,
+      'fontSize': prefs.getString(_fontSizeKey) ?? 'Medium',
+      'useAnimations': prefs.getBool(_useAnimationsKey) ?? true,
+      'useBlurEffects': prefs.getBool(_useBlurEffectsKey) ?? true,
+      'borderRadius': prefs.getDouble(_borderRadiusKey) ?? 16.0,
+      'chatBubbleStyle': prefs.getString(_bubbleStyleKey) ?? 'Modern',
+      'primaryColor': prefs.getInt(_primaryColorKey) ?? 0xFF673AB7,
+      'glassPalette': prefs.getString(_glassPaletteKey) ?? 'ocean',
+      'glassBlurSigma':
+          (prefs.getDouble(_glassBlurSigmaKey) ?? 10.0).clamp(0.0, 20.0),
+      'glassMeshSpeed': prefs.getDouble(_glassMeshSpeedKey) ?? 50.0,
+    };
   }
 
   // Reset all settings to defaults

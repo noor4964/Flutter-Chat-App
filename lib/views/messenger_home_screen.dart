@@ -3,6 +3,7 @@ import 'package:flutter_chat_app/views/chat/chat_list_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_chat_app/providers/theme_provider.dart';
+import 'package:flutter_chat_app/providers/chat_provider.dart';
 import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/views/user_list_screen.dart';
 import 'package:flutter_chat_app/views/social/news_feed_screen.dart';
@@ -115,13 +116,15 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
 
     // Main content widget — IndexedStack keeps all pages alive.
     // NewsFeedScreen is const so Flutter reuses the same instance.
+    // HeroMode(enabled: false) prevents duplicate Hero tag errors when
+    // navigating from a tab (all tabs are in the tree simultaneously).
     Widget mainContent = IndexedStack(
       index: _currentIndex,
       children: [
-        _buildErrorSafeScreen(const NewsFeedScreen()),
-        _buildErrorSafeScreen(_buildChatsSection()),
-        _buildErrorSafeScreen(_buildStoriesSection()),
-        _buildErrorSafeScreen(ProfileTabScreen(onProfileUpdated: _loadUserProfileData)),
+        HeroMode(enabled: false, child: _buildErrorSafeScreen(const NewsFeedScreen())),
+        HeroMode(enabled: false, child: _buildErrorSafeScreen(_buildChatsSection())),
+        HeroMode(enabled: false, child: _buildErrorSafeScreen(_buildStoriesSection())),
+        HeroMode(enabled: false, child: _buildErrorSafeScreen(ProfileTabScreen(onProfileUpdated: _loadUserProfileData))),
       ],
     );
 
@@ -274,6 +277,40 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         (_currentIndex == 2);
   }
 
+  Widget _buildBadgedIcon(Widget icon, int count) {
+    if (count <= 0) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: -6,
+          top: -6,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: const BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+            ),
+            constraints: const BoxConstraints(
+              minWidth: 16,
+              minHeight: 16,
+            ),
+            child: Text(
+              count > 99 ? '99+' : count.toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   List<BottomNavigationBarItem> _buildBottomNavItems(ColorScheme colorScheme) {
     return [
       const BottomNavigationBarItem(
@@ -281,9 +318,15 @@ class _MessengerHomeScreenState extends State<MessengerHomeScreen> {
         activeIcon: Icon(Icons.view_list),
         label: 'Feed',
       ),
-      const BottomNavigationBarItem(
-        icon: Icon(Icons.chat_bubble_outline),
-        activeIcon: Icon(Icons.chat_bubble),
+      BottomNavigationBarItem(
+        icon: Consumer<ChatProvider>(
+          builder: (context, chatProvider, _) =>
+              _buildBadgedIcon(const Icon(Icons.chat_bubble_outline), chatProvider.unreadChatCount),
+        ),
+        activeIcon: Consumer<ChatProvider>(
+          builder: (context, chatProvider, _) =>
+              _buildBadgedIcon(const Icon(Icons.chat_bubble), chatProvider.unreadChatCount),
+        ),
         label: 'Chats',
       ),
       const BottomNavigationBarItem(

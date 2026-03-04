@@ -1,5 +1,5 @@
 buildscript {
-    ext.kotlin_version = '1.7.10'
+    ext.kotlin_version = '2.1.0'
     repositories {
         google()
         mavenCentral()
@@ -22,6 +22,14 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    // Provide flutter SDK version properties for old-style plugins (e.g.
+    // geolocator_android) that reference flutter.compileSdkVersion before
+    // the Flutter plugin loader injects them.
+    ext.set("flutter", [
+        compileSdkVersion: 35,
+        minSdkVersion: 23,
+        targetSdkVersion: 35,
+    ])
 }
 
 tasks.register("clean", Delete) {

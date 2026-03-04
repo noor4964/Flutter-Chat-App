@@ -1,9 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter_chat_app/models/post_model.dart';
 import 'package:flutter_chat_app/models/comment_model.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/main.dart' show navigatorKey;
 import '../services/firebase_config.dart';
 import 'dart:async';
 
@@ -390,7 +392,11 @@ class PostService {
 
       final postRef = _firestore.collection('posts').doc(postId);
 
-      return await _firestore.runTransaction<bool>((transaction) async {
+      // Store post owner ID outside transaction scope
+      String? postOwnerId;
+
+      final isNowLiked =
+          await _firestore.runTransaction<bool>((transaction) async {
         final postDoc = await transaction.get(postRef);
         if (!postDoc.exists) {
           throw Exception('Post not found');
@@ -399,6 +405,7 @@ class PostService {
         final postData = postDoc.data()!;
         final likes = List<String>.from(postData['likes'] ?? []);
         final bool wasLiked = likes.contains(currentUser.uid);
+        postOwnerId = postData['userId'] as String?;
 
         if (wasLiked) {
           likes.remove(currentUser.uid);
@@ -409,6 +416,28 @@ class PostService {
         transaction.update(postRef, {'likes': likes});
         return !wasLiked; // true if now liked, false if now unliked
       });
+
+      // Log activity AFTER transaction succeeds
+      print('toggleLike: isNowLiked=$isNowLiked, postOwnerId=$postOwnerId, currentUser=${currentUser.uid}');
+      _debugSnackBar('toggleLike: liked=$isNowLiked owner=$postOwnerId');
+      if (postOwnerId != null && postOwnerId != currentUser.uid) {
+        if (isNowLiked) {
+          print('toggleLike: calling _logActivity for like');
+          await _logActivity(
+            type: 'like',
+            actorId: currentUser.uid,
+            recipientId: postOwnerId!,
+            postId: postId,
+          );
+        } else {
+          print('toggleLike: calling _removeLikeActivity (unliked)');
+          await _removeLikeActivity(actorId: currentUser.uid, postId: postId);
+        }
+      } else {
+        print('toggleLike: skipped activity log (own post or null owner)');
+      }
+
+      return isNowLiked;
     } catch (e) {
       print('Error toggling like: $e');
       rethrow;
@@ -456,6 +485,20 @@ class PostService {
       {'commentsCount': FieldValue.increment(1)},
     );
     await batch.commit();
+
+    // Log activity for post owner
+    final postDoc = await _firestore.collection('posts').doc(postId).get();
+    final postOwnerId = postDoc.data()?['userId'] as String?;
+    if (postOwnerId != null && postOwnerId != currentUser.uid) {
+      print('addComment: calling _logActivity for comment');
+      await _logActivity(
+        type: 'comment',
+        actorId: currentUser.uid,
+        recipientId: postOwnerId,
+        postId: postId,
+        commentPreview: text.length > 100 ? '${text.substring(0, 100)}...' : text,
+      );
+    }
 
     // Return a local Comment for immediate UI update
     return Comment(
@@ -658,6 +701,84 @@ class PostService {
     } catch (e) {
       print('Error checking friendship status: $e');
       return false;
+    }
+  }
+
+  // ── Activity logging ────────────────────────────────────────────────
+
+  /// TEMP DEBUG: Show a visible SnackBar using the global navigator key.
+  void _debugSnackBar(String message, {bool isError = false}) {
+    try {
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: isError ? Colors.red : Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  /// Log an activity (like, comment) to the activities collection so it
+  /// appears in the recipient's notification feed.
+  Future<void> _logActivity({
+    required String type,
+    required String actorId,
+    required String recipientId,
+    required String postId,
+    String? commentPreview,
+  }) async {
+    try {
+      print('_logActivity: START type=$type actorId=$actorId recipientId=$recipientId postId=$postId');
+      _debugSnackBar('_logActivity: START $type for post $postId');
+      // Fetch actor profile for denormalized fields
+      final actorDoc =
+          await _firestore.collection('users').doc(actorId).get();
+      final actorData = actorDoc.data() ?? {};
+      print('_logActivity: got actor data, username=${actorData['username']}');
+
+      final docRef = await _firestore.collection('activities').add({
+        'type': type,
+        'actorId': actorId,
+        'actorName': actorData['username'] ?? 'Someone',
+        'actorImage': actorData['profileImageUrl'] ?? '',
+        'recipientId': recipientId,
+        'postId': postId,
+        if (commentPreview != null) 'commentPreview': commentPreview,
+        'isRead': false,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      print('_logActivity: SUCCESS created activity doc ${docRef.id}');
+      _debugSnackBar('Activity logged OK! doc=${docRef.id}');
+    } catch (e) {
+      print('_logActivity: ERROR $e');
+      _debugSnackBar('_logActivity ERROR: $e', isError: true);
+      // Don't rethrow - activity logging failure shouldn't block the main action
+    }
+  }
+
+  /// Remove a like activity when the user unlikes a post.
+  Future<void> _removeLikeActivity({
+    required String actorId,
+    required String postId,
+  }) async {
+    try {
+      final snapshot = await _firestore
+          .collection('activities')
+          .where('type', isEqualTo: 'like')
+          .where('actorId', isEqualTo: actorId)
+          .where('postId', isEqualTo: postId)
+          .limit(1)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      print('Error removing like activity: $e');
     }
   }
 }

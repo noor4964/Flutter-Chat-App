@@ -48,46 +48,67 @@ class ThemeProvider extends ChangeNotifier {
     'Extra Large': 1.4,
   };
 
-  ThemeProvider() {
-    _themeData = _buildLightTheme();
-    _loadPreferences();
+  /// Creates a ThemeProvider.
+  ///
+  /// If [initialPrefs] is provided (recommended), theme state is set
+  /// synchronously from the pre-loaded values, eliminating the flash of
+  /// default light theme on web page refresh. If omitted, falls back to
+  /// async loading.
+  ThemeProvider({Map<String, dynamic>? initialPrefs}) {
+    if (initialPrefs != null) {
+      _applyPrefsMap(initialPrefs);
+    } else {
+      _themeData = _buildLightTheme();
+      _loadPreferences();
+    }
   }
 
-  Future<void> _loadPreferences() async {
-    // Load theme style (replaces isDarkMode)
-    final styleStr = await _settingsService.getThemeStyle();
+  /// Apply a pre-loaded preferences map synchronously.
+  void _applyPrefsMap(Map<String, dynamic> prefs) {
+    final styleStr = prefs['themeStyle'] as String? ?? 'light';
     _themeStyle = ThemeStyle.values.firstWhere(
       (s) => s.name == styleStr,
       orElse: () => ThemeStyle.light,
     );
-
-    // Load font size preference
-    _fontSize = await _settingsService.getFontSize();
-
-    // Load animation preference
-    _useAnimations = await _settingsService.useAnimations();
-
-    // Load blur effects preference
-    _useBlurEffects = await _settingsService.useBlurEffects();
-
-    // Load border radius
-    _borderRadius = await _settingsService.getBorderRadius();
-
-    // Load chat bubble style
-    _chatBubbleStyle = await _settingsService.getChatBubbleStyle();
-
-    // Load primary color
-    int colorValue = await _settingsService.getPrimaryColor();
-    _primaryColor = Color(colorValue);
-
-    // Load glass customization
-    _glassPalette = await _settingsService.getGlassPalette();
-    _glassBlurSigma = (await _settingsService.getGlassBlurSigma()).clamp(0, 20);
-    _glassMeshSpeed = await _settingsService.getGlassMeshSpeed();
-
-    // Apply theme
+    _fontSize = prefs['fontSize'] as String? ?? 'Medium';
+    _useAnimations = prefs['useAnimations'] as bool? ?? true;
+    _useBlurEffects = prefs['useBlurEffects'] as bool? ?? true;
+    _borderRadius = (prefs['borderRadius'] as num?)?.toDouble() ?? 16.0;
+    _chatBubbleStyle = prefs['chatBubbleStyle'] as String? ?? 'Modern';
+    _primaryColor = Color((prefs['primaryColor'] as int?) ?? 0xFF673AB7);
+    _glassPalette = prefs['glassPalette'] as String? ?? 'ocean';
+    _glassBlurSigma = (prefs['glassBlurSigma'] as num?)?.toDouble() ?? 10.0;
+    _glassMeshSpeed = (prefs['glassMeshSpeed'] as num?)?.toDouble() ?? 50.0;
     _rebuildTheme();
-    notifyListeners();
+  }
+
+  Future<void> _loadPreferences() async {
+    try {
+      final styleStr = await _settingsService.getThemeStyle();
+      _themeStyle = ThemeStyle.values.firstWhere(
+        (s) => s.name == styleStr,
+        orElse: () => ThemeStyle.light,
+      );
+
+      _fontSize = await _settingsService.getFontSize();
+      _useAnimations = await _settingsService.useAnimations();
+      _useBlurEffects = await _settingsService.useBlurEffects();
+      _borderRadius = await _settingsService.getBorderRadius();
+      _chatBubbleStyle = await _settingsService.getChatBubbleStyle();
+
+      int colorValue = await _settingsService.getPrimaryColor();
+      _primaryColor = Color(colorValue);
+
+      _glassPalette = await _settingsService.getGlassPalette();
+      _glassBlurSigma =
+          (await _settingsService.getGlassBlurSigma()).clamp(0, 20);
+      _glassMeshSpeed = await _settingsService.getGlassMeshSpeed();
+
+      _rebuildTheme();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to load preferences: $e');
+    }
   }
 
   void _rebuildTheme() {
@@ -105,11 +126,15 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   /// Set theme style (light/dark/glass)
-  void setThemeStyle(ThemeStyle style) async {
+  Future<void> setThemeStyle(ThemeStyle style) async {
     _themeStyle = style;
     _rebuildTheme();
-    await _settingsService.setThemeStyle(style.name);
     notifyListeners();
+    try {
+      await _settingsService.setThemeStyle(style.name);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save theme style: $e');
+    }
   }
 
   /// Toggle liquid glass on/off from the appearance settings switch.
@@ -122,100 +147,117 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   /// Legacy method for backward compatibility
-  void setTheme(bool isDarkMode) async {
+  Future<void> setTheme(bool isDarkMode) async {
     setThemeStyle(isDarkMode ? ThemeStyle.dark : ThemeStyle.light);
-
-    // Save preference
-    await _settingsService.setDarkMode(isDarkMode);
-
-    notifyListeners();
-  }
-
-  void setFontSize(String fontSize) async {
-    if (_fontSizeFactors.containsKey(fontSize)) {
-      _fontSize = fontSize;
-
-      // Rebuild theme with new font size
-      _rebuildTheme();
-
-      // Save preference
-      await _settingsService.setFontSize(fontSize);
-
-      notifyListeners();
+    try {
+      await _settingsService.setDarkMode(isDarkMode);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save dark mode: $e');
     }
   }
 
-  void setUseAnimations(bool useAnimations) async {
-    _useAnimations = useAnimations;
-
-    // Save preference
-    await _settingsService.setUseAnimations(useAnimations);
-
-    notifyListeners();
+  Future<void> setFontSize(String fontSize) async {
+    if (_fontSizeFactors.containsKey(fontSize)) {
+      _fontSize = fontSize;
+      _rebuildTheme();
+      notifyListeners();
+      try {
+        await _settingsService.setFontSize(fontSize);
+      } catch (e) {
+        debugPrint('ThemeProvider: failed to save font size: $e');
+      }
+    }
   }
 
-  void setUseBlurEffects(bool useBlurEffects) async {
-    _useBlurEffects = useBlurEffects;
-
-    // Save preference
-    await _settingsService.setUseBlurEffects(useBlurEffects);
-
+  Future<void> setUseAnimations(bool useAnimations) async {
+    _useAnimations = useAnimations;
     notifyListeners();
+    try {
+      await _settingsService.setUseAnimations(useAnimations);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save animations pref: $e');
+    }
+  }
+
+  Future<void> setUseBlurEffects(bool useBlurEffects) async {
+    _useBlurEffects = useBlurEffects;
+    notifyListeners();
+    try {
+      await _settingsService.setUseBlurEffects(useBlurEffects);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save blur effects pref: $e');
+    }
   }
 
   void setBorderRadius(double radius) {
     _borderRadius = radius;
     _sliderDebounce?.cancel();
-    _sliderDebounce = Timer(const Duration(milliseconds: 100), () {
+    _sliderDebounce = Timer(const Duration(milliseconds: 100), () async {
       _rebuildTheme();
-      _settingsService.setBorderRadius(radius);
       notifyListeners();
+      try {
+        await _settingsService.setBorderRadius(radius);
+      } catch (e) {
+        debugPrint('ThemeProvider: failed to save border radius: $e');
+      }
     });
   }
 
-  void setChatBubbleStyle(String style) async {
+  Future<void> setChatBubbleStyle(String style) async {
     _chatBubbleStyle = style;
-
-    // Save preference
-    await _settingsService.setChatBubbleStyle(style);
-
     notifyListeners();
+    try {
+      await _settingsService.setChatBubbleStyle(style);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save bubble style: $e');
+    }
   }
 
-  void setPrimaryColor(Color color) async {
+  Future<void> setPrimaryColor(Color color) async {
     _primaryColor = color;
-
-    // Rebuild theme with new color
     _rebuildTheme();
-
-    // Save preference
-    await _settingsService.setPrimaryColor(color.value);
-
     notifyListeners();
+    try {
+      await _settingsService.setPrimaryColor(color.value);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save primary color: $e');
+    }
   }
 
   // Glass customization setters
-  void setGlassPalette(String palette) async {
+  Future<void> setGlassPalette(String palette) async {
     _glassPalette = palette;
-    await _settingsService.setGlassPalette(palette);
     notifyListeners();
+    try {
+      await _settingsService.setGlassPalette(palette);
+    } catch (e) {
+      debugPrint('ThemeProvider: failed to save glass palette: $e');
+    }
   }
 
   void setGlassBlurSigma(double sigma) {
     _glassBlurSigma = sigma;
     _sliderDebounce?.cancel();
-    _sliderDebounce = Timer(const Duration(milliseconds: 100), () {
-      _settingsService.setGlassBlurSigma(sigma);
+    _sliderDebounce = Timer(const Duration(milliseconds: 100), () async {
       notifyListeners();
+      try {
+        await _settingsService.setGlassBlurSigma(sigma);
+      } catch (e) {
+        debugPrint('ThemeProvider: failed to save glass blur sigma: $e');
+      }
     });
   }
 
   void setGlassMeshSpeed(double speed) {
     _glassMeshSpeed = speed;
     _sliderDebounce?.cancel();
-    _sliderDebounce = Timer(const Duration(milliseconds: 100), () {
-      _settingsService.setGlassMeshSpeed(speed);
+    _sliderDebounce = Timer(const Duration(milliseconds: 100), () async {
       notifyListeners();
+      try {
+        await _settingsService.setGlassMeshSpeed(speed);
+      } catch (e) {
+        debugPrint('ThemeProvider: failed to save glass mesh speed: $e');
+      }
     });
   }
 

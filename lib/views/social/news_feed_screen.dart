@@ -8,6 +8,8 @@ import 'package:flutter_chat_app/widgets/post_card.dart';
 import 'package:flutter_chat_app/widgets/create_post_card.dart';
 import 'package:flutter_chat_app/widgets/glass_scaffold.dart';
 import 'package:flutter_chat_app/services/platform_helper.dart';
+import 'package:flutter_chat_app/providers/notification_provider.dart';
+import 'package:flutter_chat_app/views/notifications/notification_screen.dart';
 import 'package:flutter_chat_app/views/story_view_screen.dart';
 
 /// News Feed screen backed by [FeedProvider].
@@ -182,14 +184,60 @@ class _NewsFeedScreenState extends State<NewsFeedScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 ),
-              // Refresh icon
-              IconButton(
-                icon: Icon(
-                  Icons.favorite_border,
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
-                onPressed: _onRefresh,
-                splashRadius: 22,
+              // Friend request notification icon
+              Consumer<NotificationProvider>(
+                builder: (context, notifProvider, _) {
+                  final count = notifProvider.totalUnreadCount;
+                  return IconButton(
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Icon(
+                          Icons.favorite_border,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                        if (count > 0)
+                          Positioned(
+                            right: -6,
+                            top: -6,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 16,
+                                minHeight: 16,
+                              ),
+                              child: Text(
+                                count > 99 ? '99+' : count.toString(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        PageRouteBuilder(
+                          pageBuilder: (_, animation, __) =>
+                              const NotificationScreen(),
+                          transitionsBuilder:
+                              (_, animation, __, child) =>
+                                  FadeTransition(
+                                      opacity: animation, child: child),
+                        ),
+                      );
+                    },
+                    splashRadius: 22,
+                  );
+                },
               ),
             ],
           ),

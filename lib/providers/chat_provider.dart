@@ -31,6 +31,29 @@ class ChatProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
+  /// Number of chats where the current user has NOT read the last message.
+  /// Computed from in-memory [_chatDocs] — no extra Firestore queries.
+  int get unreadChatCount {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return 0;
+
+    int count = 0;
+    for (final doc in _chatDocs) {
+      final data = doc.data() as Map<String, dynamic>;
+      // Skip chats with no messages yet
+      final lastMessage = data['lastMessage'];
+      if (lastMessage == null ||
+          (lastMessage is String && lastMessage.isEmpty)) {
+        continue;
+      }
+      final readBy = data['lastMessageReadBy'] as List<dynamic>?;
+      if (readBy == null || !readBy.contains(uid)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   /// Call once (e.g. from main.dart or the first consumer's initState).
