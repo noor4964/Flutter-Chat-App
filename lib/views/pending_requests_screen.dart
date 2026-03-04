@@ -65,11 +65,25 @@ class _PendingRequestsScreenState extends State<PendingRequestsScreen> {
         'status': 'accepted',
       });
 
-      // Create a new chat for these users
-      await _firestore.collection('chats').add({
-        'userIds': [_auth.currentUser!.uid, senderId],
-        'createdAt': FieldValue.serverTimestamp(),
+      // Check if a chat already exists between these two users
+      String currentUserId = _auth.currentUser!.uid;
+      final existingChats = await _firestore
+          .collection('chats')
+          .where('userIds', arrayContains: currentUserId)
+          .get();
+
+      bool chatExists = existingChats.docs.any((doc) {
+        List<String> userIds = List<String>.from(doc['userIds']);
+        return userIds.contains(senderId);
       });
+
+      if (!chatExists) {
+        // Create a new chat for these users
+        await _firestore.collection('chats').add({
+          'userIds': [currentUserId, senderId],
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       print("✅ Connection request accepted and chat created.");
 

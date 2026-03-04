@@ -253,20 +253,35 @@ class AuthService {
       });
       print("✅ Connection request accepted.");
 
-      // Create a chat document for both users
-      DocumentReference chatRef = _firestore.collection('chats').doc();
-      await chatRef.set({
-        'adminId': _auth.currentUser!.uid,
-        'chatPhotoUrl': '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'isGroupChat': false,
-        'lastMessage': '',
-        'name': '',
-        'typing': {},
-        'userIds': [_auth.currentUser!.uid, receiverId],
+      // Check if a chat already exists between these two users
+      String currentUserId = _auth.currentUser!.uid;
+      final existingChats = await _firestore
+          .collection('chats')
+          .where('userIds', arrayContains: currentUserId)
+          .get();
+
+      bool chatExists = existingChats.docs.any((doc) {
+        List<String> userIds = List<String>.from(doc['userIds']);
+        return userIds.contains(receiverId);
       });
 
-      print("✅ Chat document created with ID: ${chatRef.id}");
+      if (!chatExists) {
+        // Create a chat document for both users
+        DocumentReference chatRef = _firestore.collection('chats').doc();
+        await chatRef.set({
+          'adminId': currentUserId,
+          'chatPhotoUrl': '',
+          'createdAt': FieldValue.serverTimestamp(),
+          'isGroupChat': false,
+          'lastMessage': '',
+          'name': '',
+          'typing': {},
+          'userIds': [currentUserId, receiverId],
+        });
+        print("✅ Chat document created with ID: ${chatRef.id}");
+      } else {
+        print("✅ Chat already exists, skipping creation.");
+      }
 
       // Notify chat list to update
       chatListController.add(true);

@@ -49,6 +49,7 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
   String _bio = '';
   String _location = '';
   String _profileImageUrl = '';
+  String _coverImageUrl = '';
   DateTime? _memberSince;
 
   // Stats
@@ -119,6 +120,7 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
           _bio = data['bio'] ?? '';
           _location = data['location'] ?? '';
           _profileImageUrl = data['profileImageUrl'] ?? '';
+          _coverImageUrl = data['coverImageUrl'] ?? '';
           // Extract member-since date
           if (data['createdAt'] != null && data['createdAt'] is Timestamp) {
             _memberSince = (data['createdAt'] as Timestamp).toDate();
@@ -390,207 +392,372 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
   ) {
     final bgColor = isDark ? Colors.black : Colors.white;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Avatar + stats row
-          Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Cover photo + overlapping avatar ──
+        _buildCoverWithAvatar(isDark, bgColor, colorScheme),
+        const SizedBox(height: 12),
+
+        // ── Username, bio, location, buttons ──
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Avatar with gradient ring + online dot
-              _buildAvatarWithRing(isDark, bgColor, colorScheme),
-              const SizedBox(width: 20),
-              // Stats
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              // Username
+              Text(
+                _username,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+
+              // Bio
+              if (_bio.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  _bio,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: isDark ? Colors.white70 : Colors.black87,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+
+              // Location + Member since row
+              if (_location.isNotEmpty || _memberSince != null) ...[
+                const SizedBox(height: 4),
+                Row(
                   children: [
-                    _buildTappableStatColumn(
-                      _postsCount.toString(),
-                      'Posts',
-                      theme,
-                      isDark,
-                      onTap: () {
-                        // Scroll to tab 0
-                        _tabController.animateTo(0);
-                      },
-                    ),
-                    _buildTappableStatColumn(
-                      _friendsCount.toString(),
-                      'Friends',
-                      theme,
-                      isDark,
-                      onTap: () {
+                    if (_location.isNotEmpty) ...[
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 14,
+                        color: isDark ? Colors.white38 : Colors.grey[500],
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        _location,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark ? Colors.white38 : Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                    if (_location.isNotEmpty && _memberSince != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(
+                          '\u00b7',
+                          style: TextStyle(
+                            color: isDark ? Colors.white38 : Colors.grey[500],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_memberSince != null) ...[
+                      Icon(
+                        Icons.calendar_today_outlined,
+                        size: 13,
+                        color: isDark ? Colors.white38 : Colors.grey[500],
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        'Joined ${DateFormat('MMM yyyy').format(_memberSince!)}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark ? Colors.white38 : Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 14),
+
+              // Stats row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildTappableStatColumn(
+                    _postsCount.toString(),
+                    'Posts',
+                    theme,
+                    isDark,
+                    onTap: () {
+                      _tabController.animateTo(0);
+                    },
+                  ),
+                  _buildTappableStatColumn(
+                    _friendsCount.toString(),
+                    'Friends',
+                    theme,
+                    isDark,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const FriendsProfileScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildTappableStatColumn(
+                    _totalLikesReceived.toString(),
+                    'Likes',
+                    theme,
+                    isDark,
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              // Action buttons row: Edit Profile + Share Profile
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const FriendsProfileScreen(),
-                          ),
-                        );
+                              builder: (_) => const EditProfileScreen()),
+                        ).then((_) {
+                          _loadProfile();
+                          _loadPosts();
+                          widget.onProfileUpdated?.call();
+                        });
                       },
-                    ),
-                    _buildTappableStatColumn(
-                      _totalLikesReceived.toString(),
-                      'Likes',
-                      theme,
-                      isDark,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Username
-          Text(
-            _username,
-            style: theme.textTheme.bodyLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-
-          // Bio
-          if (_bio.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              _bio,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: isDark ? Colors.white70 : Colors.black87,
-              ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-
-          // Location + Member since row
-          if (_location.isNotEmpty || _memberSince != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                if (_location.isNotEmpty) ...[
-                  Icon(
-                    Icons.location_on_outlined,
-                    size: 14,
-                    color: isDark ? Colors.white38 : Colors.grey[500],
-                  ),
-                  const SizedBox(width: 2),
-                  Text(
-                    _location,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isDark ? Colors.white38 : Colors.grey[500],
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor:
+                            isDark ? Colors.white : Colors.black87,
+                        side: BorderSide(
+                          color: isDark
+                              ? Colors.white.withOpacity(0.15)
+                              : Colors.black.withOpacity(0.12),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      child: Text(
+                        'Edit Profile',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
-                ],
-                if (_location.isNotEmpty && _memberSince != null) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      '·',
-                      style: TextStyle(
-                        color: isDark ? Colors.white38 : Colors.grey[500],
-                        fontWeight: FontWeight.bold,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        // Share profile action
+                        final user = FirebaseAuth.instance.currentUser;
+                        if (user != null) {
+                          Clipboard.setData(
+                            ClipboardData(
+                                text:
+                                    'Check out $_username\'s profile!'),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Profile link copied to clipboard'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor:
+                            isDark ? Colors.white : Colors.black87,
+                        side: BorderSide(
+                          color: isDark
+                              ? Colors.white.withOpacity(0.15)
+                              : Colors.black.withOpacity(0.12),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      child: Text(
+                        'Share Profile',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                 ],
-                if (_memberSince != null) ...[
-                  Icon(
-                    Icons.calendar_today_outlined,
-                    size: 13,
-                    color: isDark ? Colors.white38 : Colors.grey[500],
-                  ),
-                  const SizedBox(width: 3),
-                  Text(
-                    'Joined ${DateFormat('MMM yyyy').format(_memberSince!)}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isDark ? Colors.white38 : Colors.grey[500],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-
-          const SizedBox(height: 14),
-
-          // Action buttons row: Edit Profile + Share Profile
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
-                    ).then((_) {
-                      _loadProfile();
-                      _loadPosts();
-                      widget.onProfileUpdated?.call();
-                    });
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: isDark ? Colors.white : Colors.black87,
-                    side: BorderSide(
-                      color: isDark
-                          ? Colors.white.withOpacity(0.15)
-                          : Colors.black.withOpacity(0.12),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  child: Text(
-                    'Edit Profile',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    // Share profile action
-                    final user = FirebaseAuth.instance.currentUser;
-                    if (user != null) {
-                      Clipboard.setData(
-                        ClipboardData(text: 'Check out $_username\'s profile!'),
-                      );
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Profile link copied to clipboard'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: isDark ? Colors.white : Colors.black87,
-                    side: BorderSide(
-                      color: isDark
-                          ? Colors.white.withOpacity(0.15)
-                          : Colors.black.withOpacity(0.12),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  child: Text(
-                    'Share Profile',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  // ── Full-screen image viewer ──────────────────────────────────────
+
+  void _viewFullImage(String imageUrl) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque: false,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return FadeTransition(
+            opacity: animation,
+            child: Scaffold(
+              backgroundColor: Colors.black,
+              extendBodyBehindAppBar: true,
+              appBar: AppBar(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                iconTheme: const IconThemeData(color: Colors.white),
+              ),
+              body: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Center(
+                  child: InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 4.0,
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      fit: BoxFit.contain,
+                      placeholder: (context, url) => const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                      errorWidget: (context, url, error) => const Icon(
+                        Icons.error,
+                        color: Colors.white,
+                        size: 48,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Cover photo with overlapping avatar ────────────────────────────
+
+  Widget _buildCoverWithAvatar(
+    bool isDark,
+    Color bgColor,
+    ColorScheme colorScheme,
+  ) {
+    const double coverHeight = 180.0;
+    const double avatarRadius = 46.0;
+    const double avatarOverlap = 30.0;
+
+    return SizedBox(
+      height: coverHeight + avatarRadius + avatarOverlap / 2,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Cover photo
+          GestureDetector(
+            onTap: _coverImageUrl.isNotEmpty
+                ? () => _viewFullImage(_coverImageUrl)
+                : null,
+            child: SizedBox(
+              width: double.infinity,
+              height: coverHeight,
+              child: _coverImageUrl.isNotEmpty
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(
+                          imageUrl: _coverImageUrl,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            color: isDark
+                                ? const Color(0xFF1A1A1A)
+                                : const Color(0xFFE8E8E8),
+                            child: const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (context, url, error) =>
+                              _buildCoverPlaceholder(isDark, colorScheme),
+                        ),
+                        // Bottom gradient for visual separation
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 80,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  bgColor.withOpacity(0.7),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : _buildCoverPlaceholder(isDark, colorScheme),
+            ),
+          ),
+
+          // Avatar positioned overlapping bottom of cover
+          Positioned(
+            bottom: 0,
+            left: 16,
+            child: _buildAvatarWithRing(isDark, bgColor, colorScheme),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCoverPlaceholder(bool isDark, ColorScheme colorScheme) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  colorScheme.primary.withOpacity(0.3),
+                  colorScheme.secondary.withOpacity(0.2),
+                ]
+              : [
+                  colorScheme.primary.withOpacity(0.15),
+                  colorScheme.secondary.withOpacity(0.1),
+                ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.photo_camera_outlined,
+          size: 32,
+          color: isDark
+              ? Colors.white.withOpacity(0.15)
+              : Colors.black.withOpacity(0.08),
+        ),
       ),
     );
   }
@@ -620,7 +787,9 @@ class _ProfileTabScreenState extends State<ProfileTabScreen>
                 });
               }
             }
-          : null,
+          : _profileImageUrl.isNotEmpty
+              ? () => _viewFullImage(_profileImageUrl)
+              : null,
       child: Container(
         padding: const EdgeInsets.all(3),
         decoration: BoxDecoration(
